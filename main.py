@@ -265,3 +265,86 @@ def list_assessments(
             for r in recs
         ],
     }
+
+
+# ─── Newsletter ────────────────────────────────────────────────
+
+from sqlalchemy import Column, String as SAString, DateTime as SADateTime
+import uuid as _uuid
+
+class NewsletterSubscriber(Base):
+    __tablename__ = "newsletter_subscribers"
+    id         = Column(SAString(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
+    email      = Column(SAString(255), nullable=False, unique=True)
+    company    = Column(SAString(255))
+    created_at = Column(SADateTime, default=datetime)
+    source     = Column(SAString(100))  # "bot_quiz", "landing", etc.
+
+
+@app.post("/api/newsletter")
+async def newsletter_signup(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    email   = payload.get("email", "").strip().lower()
+    company = payload.get("company", "").strip()
+    source  = payload.get("source", "bot_quiz")
+
+    if not email or "@" not in email:
+        raise HTTPException(status_code=400, detail="Ungültige E-Mail")
+
+    # Check duplicate
+    existing = db.query(NewsletterSubscriber).filter(
+        NewsletterSubscriber.email == email
+    ).first()
+    if existing:
+        return {"status": "already_subscribed", "email": email}
+
+    sub = NewsletterSubscriber(
+        id=str(_uuid.uuid4()),
+        email=email,
+        company=company,
+        source=source,
+        created_at=datetime.utcnow(),
+    )
+    db.add(sub)
+    db.commit()
+
+    # Add to Resend Audience
+    RESEND_API_KEY_VAL = os.getenv("RESEND_API_KEY", "")
+    AUDIENCE_ID = os.getenv("RESEND_AUDIENCE_ID", "")
+    if RESEND_API_KEY_VAL and AUDIENCE_ID:
+        try:
+            import httpx as _httpx
+            _httpx.post(
+                f"https://api.resend.com/audiences/{AUDIENCE_ID}/contacts",
+                json={"email": email, "unsubscribed": False},
+                headers={"Authorization": f"Bearer {RESEND_API_KEY_VAL}"},
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"[RESEND AUDIENCE] {e}")
+
+    print(f"[NEWSLETTER] Neue Anmeldung: {email}")
+    return {"status": "subscribed", "email": email}
+
+
+@app.get("/api/newsletter")
+def get_newsletter(db: Session = Depends(get_db)):
+    subs = db.query(NewsletterSubscriber).order_by(
+        NewsletterSubscriber.created_at.desc()
+    ).all()
+    return {
+        "total": len(subs),
+        "items": [
+            {
+                "id": s.id,
+                "email": s.email,
+                "company": s.company,
+                "source": s.source,
+                "created_at": s.created_at.isoformat() if s.created_at else None,
+            }
+            for s in subs
+        ]
+    }

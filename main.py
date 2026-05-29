@@ -5,17 +5,27 @@ from typing import Optional
 
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, Response
+from fastapi.responses import Response
+from sqlalchemy import Column, String, DateTime
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
-from database import get_db, init_db
+from database import get_db, init_db, Base
 from models import Assessment
 from schemas import AssessmentRequest, AssessmentResponse
 from pdf_generator import generate_pdf
 from email_service import send_lead_email, send_sales_alert
 
 load_dotenv()
+
+# ─── Newsletter Model ─────────────────────────────────────────
+class NewsletterSubscriber(Base):
+    __tablename__ = "newsletter_subscribers"
+    id         = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    email      = Column(String(255), nullable=False, unique=True)
+    company    = Column(String(255))
+    source     = Column(String(100))
+    created_at = Column(DateTime, default=datetime.utcnow)
 
 # ─── App Setup ────────────────────────────────────────────────
 app = FastAPI(
@@ -37,40 +47,30 @@ app.add_middleware(
 
 @app.on_event("startup")
 def startup():
-    """Datenbank-Tabellen beim Start erstellen."""
     try:
         init_db()
+        # Also create newsletter table
+        from database import engine
+        Base.metadata.create_all(bind=engine)
         print("[DB] Tabellen erfolgreich initialisiert.")
     except Exception as e:
         print(f"[DB ERROR] {e}")
 
 
 # ─── Background Tasks ─────────────────────────────────────────
-def process_assessment_async(
-    assessment_id: str,
-    data: dict,
-    lead: dict,
-    scores: dict,
-    analysis: dict,
-    db: Session,
-):
-    """PDF generieren + E-Mails senden (läuft im Hintergrund)."""
+def process_assessment_async(assessment_id, data, lead, scores, analysis, db):
     try:
-        # PDF generieren
         pdf_bytes = generate_pdf(data)
-        print(f"[PDF] Generiert für Assessment {assessment_id} ({len(pdf_bytes)} Bytes)")
+        print(f"[PDF] Generiert für {assessment_id} ({len(pdf_bytes)} Bytes)")
 
-        # E-Mail an den Lead (mit PDF-Anhang)
         ok_lead = send_lead_email(lead, scores, analysis, pdf_bytes)
-        print(f"[EMAIL] Lead-E-Mail {'gesendet' if ok_lead else 'FEHLER'}: {lead.get('email')}")
+        print(f"[EMAIL] Lead: {'OK' if ok_lead else 'FEHLER'} → {lead.get('email')}")
 
-        # Sales-Alert wenn salesFlag
         ok_alert = False
         if scores.get("salesFlag") or scores.get("final", 100) < 80:
             ok_alert = send_sales_alert(lead, scores, analysis, assessment_id)
-            print(f"[EMAIL] Sales-Alert {'gesendet' if ok_alert else 'FEHLER'}")
+            print(f"[EMAIL] Alert: {'OK' if ok_alert else 'FEHLER'}")
 
-        # DB-Status aktualisieren
         rec = db.query(Assessment).filter(
             Assessment.id == uuid.UUID(assessment_id)
         ).first()
@@ -79,7 +79,6 @@ def process_assessment_async(
             rec.email_sent_alert = ok_alert
             rec.pdf_generated    = True
             db.commit()
-
     except Exception as e:
         print(f"[BACKGROUND ERROR] {e}")
     finally:
@@ -99,13 +98,8 @@ def create_assessment(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
-    """
-    Speichert ein abgeschlossenes Assessment, löst PDF-Generierung
-    und E-Mail-Versand als Background-Task aus.
-    """
     assessment_id = str(uuid.uuid4())
 
-    # ── In DB speichern ──────────────────────────────────────
     rec = Assessment(
         id             = uuid.UUID(assessment_id),
         company_name   = payload.lead.company,
@@ -119,8 +113,8 @@ def create_assessment(
         dimension_scores = payload.scores.ds,
         final_score    = payload.scores.final,
         color          = payload.scores.color,
-        top_issues     = [t.model_dump() if hasattr(t, "model_dump") else t for t in payload.scores.top],
-        critical_issues= [c.model_dump() if hasattr(c, "model_dump") else c for c in payload.scores.crits],
+        top_issues     = [t.model_dump() if hasattr(t,"model_dump") else t for t in payload.scores.top],
+        critical_issues= [c.model_dump() if hasattr(c,"model_dump") else c for c in payload.scores.crits],
         sales_flag     = payload.scores.salesFlag,
         analysis       = payload.analysis.model_dump(),
     )
@@ -129,7 +123,6 @@ def create_assessment(
     db.refresh(rec)
     print(f"[DB] Assessment gespeichert: {assessment_id} | {payload.lead.company} | {int(payload.scores.final)}/100")
 
-    # ── Background-Task starten ──────────────────────────────
     from database import SessionLocal
     bg_db = SessionLocal()
 
@@ -162,7 +155,6 @@ def create_assessment(
 
 @app.get("/api/assessment/{assessment_id}")
 def get_assessment(assessment_id: str, db: Session = Depends(get_db)):
-    """Gibt ein Assessment anhand der ID zurück."""
     try:
         rec = db.query(Assessment).filter(
             Assessment.id == uuid.UUID(assessment_id)
@@ -180,6 +172,7 @@ def get_assessment(assessment_id: str, db: Session = Depends(get_db)):
         "industry":        rec.industry_label,
         "submitted_by":    rec.submitted_by,
         "email":           rec.email,
+        "phone":           rec.phone,
         "timestamp":       rec.timestamp.isoformat(),
         "final_score":     rec.final_score,
         "color":           rec.color,
@@ -195,7 +188,6 @@ def get_assessment(assessment_id: str, db: Session = Depends(get_db)):
 
 @app.get("/api/assessment/{assessment_id}/pdf")
 def download_pdf(assessment_id: str, db: Session = Depends(get_db)):
-    """Generiert und liefert den PDF-Report on-demand."""
     try:
         rec = db.query(Assessment).filter(
             Assessment.id == uuid.UUID(assessment_id)
@@ -224,21 +216,18 @@ def download_pdf(assessment_id: str, db: Session = Depends(get_db)):
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="YNHALD_Report_{assessment_id[:8]}.pdf"'
-        },
+        headers={"Content-Disposition": f'attachment; filename="YNHALD_Report_{assessment_id[:8]}.pdf"'},
     )
 
 
 @app.get("/api/assessments")
 def list_assessments(
-    limit: int = 20,
+    limit: int = 100,
     offset: int = 0,
     color: Optional[str] = None,
     sales_flag: Optional[bool] = None,
     db: Session = Depends(get_db),
 ):
-    """Listet alle Assessments (für internes Dashboard)."""
     q = db.query(Assessment)
     if color:
         q = q.filter(Assessment.color == color)
@@ -252,15 +241,21 @@ def list_assessments(
         "total": total,
         "items": [
             {
-                "id":          str(r.id),
-                "company":     r.company_name,
-                "supplier":    r.supplier_name,
-                "email":       r.email,
-                "timestamp":   r.timestamp.isoformat(),
-                "final_score": r.final_score,
-                "color":       r.color,
-                "sales_flag":  r.sales_flag,
-                "industry":    r.industry_label,
+                "id":              str(r.id),
+                "company":         r.company_name,
+                "supplier":        r.supplier_name,
+                "email":           r.email,
+                "phone":           getattr(r, "phone", ""),
+                "submitted_by":    r.submitted_by,
+                "timestamp":       r.timestamp.isoformat(),
+                "final_score":     r.final_score,
+                "color":           r.color,
+                "sales_flag":      r.sales_flag,
+                "industry":        r.industry_label,
+                "dimension_scores":r.dimension_scores,
+                "critical_issues": r.critical_issues,
+                "top_issues":      r.top_issues,
+                "analysis":        r.analysis,
             }
             for r in recs
         ],
@@ -269,24 +264,8 @@ def list_assessments(
 
 # ─── Newsletter ────────────────────────────────────────────────
 
-from sqlalchemy import Column, String as SAString, DateTime as SADateTime
-import uuid as _uuid
-
-class NewsletterSubscriber(Base):
-    __tablename__ = "newsletter_subscribers"
-    id         = Column(SAString(36), primary_key=True, default=lambda: str(_uuid.uuid4()))
-    email      = Column(SAString(255), nullable=False, unique=True)
-    company    = Column(SAString(255))
-    created_at = Column(SADateTime, default=datetime)
-    source     = Column(SAString(100))  # "bot_quiz", "landing", etc.
-
-
 @app.post("/api/newsletter")
-async def newsletter_signup(
-    payload: dict,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-):
+async def newsletter_signup(payload: dict, db: Session = Depends(get_db)):
     email   = payload.get("email", "").strip().lower()
     company = payload.get("company", "").strip()
     source  = payload.get("source", "bot_quiz")
@@ -294,7 +273,6 @@ async def newsletter_signup(
     if not email or "@" not in email:
         raise HTTPException(status_code=400, detail="Ungültige E-Mail")
 
-    # Check duplicate
     existing = db.query(NewsletterSubscriber).filter(
         NewsletterSubscriber.email == email
     ).first()
@@ -302,7 +280,7 @@ async def newsletter_signup(
         return {"status": "already_subscribed", "email": email}
 
     sub = NewsletterSubscriber(
-        id=str(_uuid.uuid4()),
+        id=str(uuid.uuid4()),
         email=email,
         company=company,
         source=source,
@@ -311,16 +289,16 @@ async def newsletter_signup(
     db.add(sub)
     db.commit()
 
-    # Add to Resend Audience
-    RESEND_API_KEY_VAL = os.getenv("RESEND_API_KEY", "")
+    # Resend Audience sync (optional)
+    RESEND_KEY = os.getenv("RESEND_API_KEY", "")
     AUDIENCE_ID = os.getenv("RESEND_AUDIENCE_ID", "")
-    if RESEND_API_KEY_VAL and AUDIENCE_ID:
+    if RESEND_KEY and AUDIENCE_ID:
         try:
-            import httpx as _httpx
-            _httpx.post(
+            import httpx
+            httpx.post(
                 f"https://api.resend.com/audiences/{AUDIENCE_ID}/contacts",
                 json={"email": email, "unsubscribed": False},
-                headers={"Authorization": f"Bearer {RESEND_API_KEY_VAL}"},
+                headers={"Authorization": f"Bearer {RESEND_KEY}"},
                 timeout=10,
             )
         except Exception as e:
@@ -339,10 +317,10 @@ def get_newsletter(db: Session = Depends(get_db)):
         "total": len(subs),
         "items": [
             {
-                "id": s.id,
-                "email": s.email,
-                "company": s.company,
-                "source": s.source,
+                "id":         s.id,
+                "email":      s.email,
+                "company":    s.company,
+                "source":     s.source,
                 "created_at": s.created_at.isoformat() if s.created_at else None,
             }
             for s in subs

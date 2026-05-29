@@ -326,3 +326,23 @@ def get_newsletter(db: Session = Depends(get_db)):
             for s in subs
         ]
     }
+
+
+# ─── Delete Assessment ────────────────────────────────────────
+
+@app.delete("/api/assessment/{assessment_id}")
+def delete_assessment(assessment_id: str, db: Session = Depends(get_db)):
+    try:
+        rec = db.query(Assessment).filter(
+            Assessment.id == uuid.UUID(assessment_id)
+        ).first()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Ungültige ID")
+
+    if not rec:
+        raise HTTPException(status_code=404, detail="Nicht gefunden")
+
+    db.delete(rec)
+    db.commit()
+    print(f"[DB] Assessment gelöscht: {assessment_id}")
+    return {"status": "deleted", "id": assessment_id}

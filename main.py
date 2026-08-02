@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from sqlalchemy import Column, String, DateTime
+from sqlalchemy import Column, String, DateTime, JSON
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -14,7 +14,12 @@ from database import get_db, init_db, Base
 from models import Assessment
 from schemas import AssessmentRequest, AssessmentResponse
 from pdf_generator import generate_pdf
-from email_service import send_lead_email, send_sales_alert
+from email_service import (
+    send_lead_email,
+    send_sales_alert,
+    send_criticality_lead_email,
+    send_criticality_alert,
+)
 
 load_dotenv()
 
@@ -26,6 +31,22 @@ class NewsletterSubscriber(Base):
     company    = Column(String(255))
     source     = Column(String(100))
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+# ─── Criticality Lead Model ───────────────────────────────────
+class CriticalityLead(Base):
+    __tablename__ = "criticality_leads"
+    id         = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name       = Column(String(255))
+    company    = Column(String(255))
+    supplier   = Column(String(255))
+    email      = Column(String(255), nullable=False)
+    phone      = Column(String(100))
+    grade      = Column(String(2))
+    grade_name = Column(String(100))
+    payload    = Column(JSON)          # answers + recommendation + analysis
+    created_at = Column(DateTime, default=datetime.utcnow)
+
 
 # ─── App Setup ────────────────────────────────────────────────
 app = FastAPI(
@@ -49,7 +70,7 @@ app.add_middleware(
 def startup():
     try:
         init_db()
-        # Also create newsletter table
+        # Also create newsletter + criticality tables
         from database import engine
         Base.metadata.create_all(bind=engine)
         print("[DB] Tabellen erfolgreich initialisiert.")
@@ -151,6 +172,88 @@ def create_assessment(
         email_sent=True,
         message=f"Assessment gespeichert. Report wird an {payload.lead.email} gesendet.",
     )
+
+
+# ─── Criticality Route ────────────────────────────────────────
+
+@app.post("/api/criticality")
+def create_criticality(
+    payload: dict,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+):
+    lead = payload.get("lead", {})
+    if not lead.get("email"):
+        raise HTTPException(status_code=400, detail="E-Mail fehlt")
+
+    crit_id = str(uuid.uuid4())
+    criticality = payload.get("criticality", {})
+    crit = {
+        "grade":          criticality.get("grade", ""),
+        "gradeName":      criticality.get("gradeName", ""),
+        "recommendation": payload.get("recommendation", {}),
+    }
+    analysis = payload.get("analysis", {}) or {}
+
+    rec = CriticalityLead(
+        id         = crit_id,
+        name       = lead.get("name", ""),
+        company    = lead.get("company", ""),
+        supplier   = lead.get("supplier", ""),
+        email      = lead["email"],
+        phone      = lead.get("phone", ""),
+        grade      = crit["grade"],
+        grade_name = crit["gradeName"],
+        payload    = payload,
+    )
+    db.add(rec)
+    db.commit()
+    print(f"[DB] Criticality gespeichert: {crit_id} | {lead.get('company')} | Stufe {crit['grade']}")
+
+    background_tasks.add_task(send_criticality_lead_email, lead, crit, analysis)
+    background_tasks.add_task(send_criticality_alert, lead, crit, analysis, crit_id)
+
+    return {
+        "id": crit_id,
+        "status": "saved",
+        "message": f"Report wird an {lead['email']} gesendet.",
+    }
+
+
+@app.get("/api/criticality")
+def list_criticality(limit: int = 100, offset: int = 0, db: Session = Depends(get_db)):
+    q = db.query(CriticalityLead)
+    total = q.count()
+    recs = q.order_by(CriticalityLead.created_at.desc()).offset(offset).limit(limit).all()
+    return {
+        "total": total,
+        "items": [
+            {
+                "id":         r.id,
+                "name":       r.name,
+                "company":    r.company,
+                "supplier":   r.supplier,
+                "email":      r.email,
+                "phone":      r.phone,
+                "grade":      r.grade,
+                "grade_name": r.grade_name,
+                "payload":    r.payload,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+            }
+            for r in recs
+        ],
+    }
+
+
+@app.delete("/api/criticality/{crit_id}")
+def delete_criticality(crit_id: str, db: Session = Depends(get_db)):
+    rec = db.query(CriticalityLead).filter(CriticalityLead.id == crit_id).first()
+    if not rec:
+        raise HTTPException(status_code=404, detail="Nicht gefunden")
+    db.delete(rec)
+    db.commit()
+    print(f"[DB] Criticality gelöscht: {crit_id}")
+    return {"status": "deleted", "id": crit_id}
 
 
 @app.get("/api/assessment/{assessment_id}")

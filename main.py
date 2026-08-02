@@ -6,7 +6,7 @@ from typing import Optional
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
-from sqlalchemy import Column, String, DateTime, JSON
+from sqlalchemy import Column, String, DateTime, Integer, JSON
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
@@ -23,7 +23,7 @@ from email_service import (
 
 load_dotenv()
 
-# ─── Newsletter Model ─────────────────────────────────────────
+# --- Newsletter Model ---
 class NewsletterSubscriber(Base):
     __tablename__ = "newsletter_subscribers"
     id         = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
@@ -33,25 +33,25 @@ class NewsletterSubscriber(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
-# ─── Criticality Lead Model ───────────────────────────────────
+# --- Criticality Lead Model (Multi-Lieferant) ---
 class CriticalityLead(Base):
     __tablename__ = "criticality_leads"
-    id         = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
-    name       = Column(String(255))
-    company    = Column(String(255))
-    supplier   = Column(String(255))
-    email      = Column(String(255), nullable=False)
-    phone      = Column(String(100))
-    grade      = Column(String(2))
-    grade_name = Column(String(100))
-    payload    = Column(JSON)          # answers + recommendation + analysis
-    created_at = Column(DateTime, default=datetime.utcnow)
+    id            = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name          = Column(String(255))
+    company       = Column(String(255))
+    email         = Column(String(255), nullable=False)
+    phone         = Column(String(100))
+    supplier_count = Column(Integer, default=0)
+    top_grade     = Column(String(2))          # kritischste Stufe (A > B > C > D)
+    suppliers     = Column(JSON)               # Liste aller Lieferanten mit Einstufung
+    summary       = Column(String(2000))       # KI-Gesamteinschaetzung
+    created_at    = Column(DateTime, default=datetime.utcnow)
 
 
-# ─── App Setup ────────────────────────────────────────────────
+# --- App Setup ---
 app = FastAPI(
     title="YNHALD Supplier Risk Bot API",
-    description="Backend für den YNHALD Supplier Risk Assessment Bot",
+    description="Backend fuer den YNHALD Supplier Risk Assessment Bot",
     version="1.0.0",
 )
 
@@ -70,7 +70,6 @@ app.add_middleware(
 def startup():
     try:
         init_db()
-        # Also create newsletter + criticality tables
         from database import engine
         Base.metadata.create_all(bind=engine)
         print("[DB] Tabellen erfolgreich initialisiert.")
@@ -78,14 +77,14 @@ def startup():
         print(f"[DB ERROR] {e}")
 
 
-# ─── Background Tasks ─────────────────────────────────────────
+# --- Background Tasks ---
 def process_assessment_async(assessment_id, data, lead, scores, analysis, db):
     try:
         pdf_bytes = generate_pdf(data)
-        print(f"[PDF] Generiert für {assessment_id} ({len(pdf_bytes)} Bytes)")
+        print(f"[PDF] Generiert fuer {assessment_id} ({len(pdf_bytes)} Bytes)")
 
         ok_lead = send_lead_email(lead, scores, analysis, pdf_bytes)
-        print(f"[EMAIL] Lead: {'OK' if ok_lead else 'FEHLER'} → {lead.get('email')}")
+        print(f"[EMAIL] Lead: {'OK' if ok_lead else 'FEHLER'} -> {lead.get('email')}")
 
         ok_alert = False
         if scores.get("salesFlag") or scores.get("final", 100) < 80:
@@ -106,7 +105,7 @@ def process_assessment_async(assessment_id, data, lead, scores, analysis, db):
         db.close()
 
 
-# ─── Routes ───────────────────────────────────────────────────
+# --- Routes ---
 
 @app.get("/health")
 def health():
@@ -174,7 +173,10 @@ def create_assessment(
     )
 
 
-# ─── Criticality Route ────────────────────────────────────────
+# --- Criticality Route (Multi-Lieferant) ---
+
+_GRADE_ORDER = {"A": 4, "B": 3, "C": 2, "D": 1}
+
 
 @app.post("/api/criticality")
 def create_criticality(
@@ -186,32 +188,36 @@ def create_criticality(
     if not lead.get("email"):
         raise HTTPException(status_code=400, detail="E-Mail fehlt")
 
+    suppliers = payload.get("suppliers", [])
+    if not suppliers:
+        raise HTTPException(status_code=400, detail="Keine Lieferanten uebergeben")
+
+    summary = payload.get("summary") or ""
     crit_id = str(uuid.uuid4())
-    criticality = payload.get("criticality", {})
-    crit = {
-        "grade":          criticality.get("grade", ""),
-        "gradeName":      criticality.get("gradeName", ""),
-        "recommendation": payload.get("recommendation", {}),
-    }
-    analysis = payload.get("analysis", {}) or {}
+
+    # kritischste Stufe bestimmen (A ist am kritischsten)
+    top_grade = max(
+        (s.get("grade", "D") for s in suppliers),
+        key=lambda g: _GRADE_ORDER.get(g, 0),
+    )
 
     rec = CriticalityLead(
-        id         = crit_id,
-        name       = lead.get("name", ""),
-        company    = lead.get("company", ""),
-        supplier   = lead.get("supplier", ""),
-        email      = lead["email"],
-        phone      = lead.get("phone", ""),
-        grade      = crit["grade"],
-        grade_name = crit["gradeName"],
-        payload    = payload,
+        id             = crit_id,
+        name           = lead.get("name", ""),
+        company        = lead.get("company", ""),
+        email          = lead["email"],
+        phone          = lead.get("phone", ""),
+        supplier_count = len(suppliers),
+        top_grade      = top_grade,
+        suppliers      = suppliers,
+        summary        = summary[:2000],
     )
     db.add(rec)
     db.commit()
-    print(f"[DB] Criticality gespeichert: {crit_id} | {lead.get('company')} | Stufe {crit['grade']}")
+    print(f"[DB] Criticality gespeichert: {crit_id} | {lead.get('company')} | {len(suppliers)} Lieferanten | Top {top_grade}")
 
-    background_tasks.add_task(send_criticality_lead_email, lead, crit, analysis)
-    background_tasks.add_task(send_criticality_alert, lead, crit, analysis, crit_id)
+    background_tasks.add_task(send_criticality_lead_email, lead, suppliers, summary)
+    background_tasks.add_task(send_criticality_alert, lead, suppliers, crit_id, summary)
 
     return {
         "id": crit_id,
@@ -229,16 +235,16 @@ def list_criticality(limit: int = 100, offset: int = 0, db: Session = Depends(ge
         "total": total,
         "items": [
             {
-                "id":         r.id,
-                "name":       r.name,
-                "company":    r.company,
-                "supplier":   r.supplier,
-                "email":      r.email,
-                "phone":      r.phone,
-                "grade":      r.grade,
-                "grade_name": r.grade_name,
-                "payload":    r.payload,
-                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "id":             r.id,
+                "name":           r.name,
+                "company":        r.company,
+                "email":          r.email,
+                "phone":          r.phone,
+                "supplier_count": r.supplier_count,
+                "top_grade":      r.top_grade,
+                "suppliers":      r.suppliers,
+                "summary":        r.summary,
+                "created_at":     r.created_at.isoformat() if r.created_at else None,
             }
             for r in recs
         ],
@@ -252,7 +258,7 @@ def delete_criticality(crit_id: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Nicht gefunden")
     db.delete(rec)
     db.commit()
-    print(f"[DB] Criticality gelöscht: {crit_id}")
+    print(f"[DB] Criticality geloescht: {crit_id}")
     return {"status": "deleted", "id": crit_id}
 
 
@@ -263,7 +269,7 @@ def get_assessment(assessment_id: str, db: Session = Depends(get_db)):
             Assessment.id == uuid.UUID(assessment_id)
         ).first()
     except Exception:
-        raise HTTPException(status_code=400, detail="Ungültige Assessment-ID")
+        raise HTTPException(status_code=400, detail="Ungueltige Assessment-ID")
 
     if not rec:
         raise HTTPException(status_code=404, detail="Assessment nicht gefunden")
@@ -296,7 +302,7 @@ def download_pdf(assessment_id: str, db: Session = Depends(get_db)):
             Assessment.id == uuid.UUID(assessment_id)
         ).first()
     except Exception:
-        raise HTTPException(status_code=400, detail="Ungültige ID")
+        raise HTTPException(status_code=400, detail="Ungueltige ID")
 
     if not rec:
         raise HTTPException(status_code=404, detail="Assessment nicht gefunden")
@@ -365,7 +371,7 @@ def list_assessments(
     }
 
 
-# ─── Newsletter ────────────────────────────────────────────────
+# --- Newsletter ---
 
 @app.post("/api/newsletter")
 async def newsletter_signup(payload: dict, db: Session = Depends(get_db)):
@@ -374,7 +380,7 @@ async def newsletter_signup(payload: dict, db: Session = Depends(get_db)):
     source  = payload.get("source", "bot_quiz")
 
     if not email or "@" not in email:
-        raise HTTPException(status_code=400, detail="Ungültige E-Mail")
+        raise HTTPException(status_code=400, detail="Ungueltige E-Mail")
 
     existing = db.query(NewsletterSubscriber).filter(
         NewsletterSubscriber.email == email
@@ -392,7 +398,6 @@ async def newsletter_signup(payload: dict, db: Session = Depends(get_db)):
     db.add(sub)
     db.commit()
 
-    # Resend Audience sync (optional)
     RESEND_KEY = os.getenv("RESEND_API_KEY", "")
     AUDIENCE_ID = os.getenv("RESEND_AUDIENCE_ID", "")
     if RESEND_KEY and AUDIENCE_ID:
@@ -431,7 +436,7 @@ def get_newsletter(db: Session = Depends(get_db)):
     }
 
 
-# ─── Delete Assessment ────────────────────────────────────────
+# --- Delete Assessment ---
 
 @app.delete("/api/assessment/{assessment_id}")
 def delete_assessment(assessment_id: str, db: Session = Depends(get_db)):
@@ -440,12 +445,12 @@ def delete_assessment(assessment_id: str, db: Session = Depends(get_db)):
             Assessment.id == uuid.UUID(assessment_id)
         ).first()
     except Exception:
-        raise HTTPException(status_code=400, detail="Ungültige ID")
+        raise HTTPException(status_code=400, detail="Ungueltige ID")
 
     if not rec:
         raise HTTPException(status_code=404, detail="Nicht gefunden")
 
     db.delete(rec)
     db.commit()
-    print(f"[DB] Assessment gelöscht: {assessment_id}")
+    print(f"[DB] Assessment geloescht: {assessment_id}")
     return {"status": "deleted", "id": assessment_id}

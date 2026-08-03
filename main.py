@@ -14,6 +14,7 @@ from database import get_db, init_db, Base
 from models import Assessment
 from schemas import AssessmentRequest, AssessmentResponse
 from pdf_generator import generate_pdf
+from criticality_pdf import generate_criticality_pdf
 from email_service import (
     send_lead_email,
     send_sales_alert,
@@ -216,7 +217,49 @@ def create_criticality(
     db.commit()
     print(f"[DB] Criticality gespeichert: {crit_id} | {lead.get('company')} | {len(suppliers)} Lieferanten | Top {top_grade}")
 
-    background_tasks.add_task(send_criticality_lead_email, lead, suppliers, summary)
+    # Newsletter-Opt-in (nur wenn ausdruecklich zugestimmt)
+    if lead.get("newsletter"):
+        try:
+            email_nl = lead["email"].strip().lower()
+            existing = db.query(NewsletterSubscriber).filter(
+                NewsletterSubscriber.email == email_nl
+            ).first()
+            if not existing:
+                db.add(NewsletterSubscriber(
+                    id=str(uuid.uuid4()),
+                    email=email_nl,
+                    company=lead.get("company", ""),
+                    source="kritikalitaet",
+                    created_at=datetime.utcnow(),
+                ))
+                db.commit()
+                print(f"[NEWSLETTER] Neue Anmeldung via Kritikalitaet: {email_nl}")
+                # optional in Resend-Audience eintragen
+                RESEND_KEY = os.getenv("RESEND_API_KEY", "")
+                AUDIENCE_ID = os.getenv("RESEND_AUDIENCE_ID", "")
+                if RESEND_KEY and AUDIENCE_ID:
+                    try:
+                        import httpx
+                        httpx.post(
+                            f"https://api.resend.com/audiences/{AUDIENCE_ID}/contacts",
+                            json={"email": email_nl, "unsubscribed": False},
+                            headers={"Authorization": f"Bearer {RESEND_KEY}"},
+                            timeout=10,
+                        )
+                    except Exception as e:
+                        print(f"[RESEND AUDIENCE] {e}")
+        except Exception as e:
+            print(f"[NEWSLETTER ERROR] {e}")
+
+    # PDF-Report erzeugen (SW-Tech-Design)
+    pdf_bytes = None
+    try:
+        pdf_bytes = generate_criticality_pdf(lead, suppliers, summary)
+        print(f"[PDF] Kritikalitaets-Report erzeugt ({len(pdf_bytes)} Bytes)")
+    except Exception as e:
+        print(f"[PDF ERROR] {e}")
+
+    background_tasks.add_task(send_criticality_lead_email, lead, suppliers, summary, pdf_bytes)
     background_tasks.add_task(send_criticality_alert, lead, suppliers, crit_id, summary)
 
     return {

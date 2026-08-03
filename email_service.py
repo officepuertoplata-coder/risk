@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import os
 import base64
 import httpx
@@ -8,11 +9,17 @@ FROM_EMAIL     = os.getenv("FROM_EMAIL", "onboarding@resend.dev")
 FROM_NAME      = os.getenv("FROM_NAME", "YNHALD Supplier Risk")
 ALERT_EMAIL    = os.getenv("ALERT_EMAIL", "azajic@sw-tech.net")
 
+# Software Technologies Links
+CAL_URL      = "https://cal.com/alexander-zajic/riskmanagement"
+WHATSAPP_URL = "https://wa.me/4367764118066?text=Anfrage-YLB9"
+WEBSITE_URL  = "https://sw-tech.net"
+
 SCORE_LABELS = {"green": "Gut gesichert", "yellow": "Handlungsbedarf", "red": "Kritisches Risiko"}
 
 
-def _send(to: str, subject: str, html: str, pdf_bytes: Optional[bytes] = None) -> bool:
-    """Sendet eine E-Mail via Resend REST API."""
+def _send(to: str, subject: str, html: str, pdf_bytes: Optional[bytes] = None,
+          pdf_name: str = "Report.pdf") -> bool:
+    """Sendet eine E-Mail via Resend REST API (optional mit PDF-Anhang)."""
     if not RESEND_API_KEY:
         print(f"[EMAIL] Kein API-Key - wuerde senden an {to}: {subject}")
         return True
@@ -23,11 +30,10 @@ def _send(to: str, subject: str, html: str, pdf_bytes: Optional[bytes] = None) -
         "subject": subject,
         "html":    html,
     }
-
     if pdf_bytes:
         payload["attachments"] = [{
-            "filename":    "YNHALD_Supplier_Risk_Report.pdf",
-            "content":     base64.b64encode(pdf_bytes).decode("utf-8"),
+            "filename":     pdf_name,
+            "content":      base64.b64encode(pdf_bytes).decode("utf-8"),
             "content_type": "application/pdf",
         }]
 
@@ -36,7 +42,7 @@ def _send(to: str, subject: str, html: str, pdf_bytes: Optional[bytes] = None) -
             "https://api.resend.com/emails",
             json=payload,
             headers={"Authorization": f"Bearer {RESEND_API_KEY}"},
-            timeout=15,
+            timeout=20,
         )
         r.raise_for_status()
         return True
@@ -45,8 +51,11 @@ def _send(to: str, subject: str, html: str, pdf_bytes: Optional[bytes] = None) -
         return False
 
 
+# ==============================================================
+#  BESTEHEND: Risikobewertung
+# ==============================================================
+
 def send_lead_email(lead: dict, scores: dict, analysis: dict, pdf_bytes: bytes) -> bool:
-    """E-Mail an den Lead mit PDF-Anhang."""
     name      = lead.get("name", "")
     company   = lead.get("company", "")
     final     = int(scores.get("final", 0))
@@ -90,37 +99,24 @@ def send_lead_email(lead: dict, scores: dict, analysis: dict, pdf_bytes: bytes) 
   </div>
   <div class="body">
     <p>Guten Tag {name},</p>
-    <p class="text">vielen Dank fuer die Teilnahme am YNHALD Supplier Risk Check. Anbei finden Sie Ihren vollstaendigen PDF-Report fuer <strong>{company}</strong>.</p>
-    <div class="section">
-      <div class="section-title">Executive Summary</div>
-      <p class="text">{exec_txt}</p>
-    </div>
-    <div class="section">
-      <div class="section-title">Empfohlenes Paket</div>
-      <p class="text"><strong>{pkg}</strong> &mdash; {pkg_why}</p>
-    </div>
+    <p class="text">vielen Dank fuer die Teilnahme am YNHALD Supplier Risk Check. Anbei Ihr vollstaendiger PDF-Report fuer <strong>{company}</strong>.</p>
+    <div class="section"><div class="section-title">Executive Summary</div><p class="text">{exec_txt}</p></div>
+    <div class="section"><div class="section-title">Empfohlenes Paket</div><p class="text"><strong>{pkg}</strong> &mdash; {pkg_why}</p></div>
     <div class="cta-box">
       <div class="cta-title">Kostenloses 30-min Erstgespraech buchen</div>
-      <p style="font-size:13px;color:#64748B;margin:0 0 14px">Sprechen Sie mit einem unserer Experten ueber Ihre Ergebnisse.</p>
-      <a href="mailto:azajic@sw-tech.net" class="cta-btn">Termin anfragen</a>
+      <a href="{CAL_URL}" class="cta-btn">Termin buchen</a>
     </div>
-    <p class="text">Den vollstaendigen Report mit allen Details und Handlungsempfehlungen finden Sie im Anhang.</p>
     <p class="text">Mit freundlichen Gruessen,<br><strong>Das YNHALD Team</strong></p>
   </div>
   <div class="footer">YNHALD &middot; azajic@sw-tech.net &middot; Vertraulich</div>
 </div>
 </body></html>
 """
-    return _send(
-        to=lead["email"],
-        subject=f"Ihr YNHALD Supplier Risk Report - Score: {final}/100",
-        html=html,
-        pdf_bytes=pdf_bytes,
-    )
+    return _send(lead["email"], f"Ihr YNHALD Supplier Risk Report - Score: {final}/100",
+                 html, pdf_bytes=pdf_bytes, pdf_name="YNHALD_Supplier_Risk_Report.pdf")
 
 
 def send_sales_alert(lead: dict, scores: dict, analysis: dict, assessment_id: str) -> bool:
-    """Sales-Alert an das YNHALD-Team."""
     name    = lead.get("name", "")
     company = lead.get("company", "")
     supplier= lead.get("supplier", "-")
@@ -128,173 +124,163 @@ def send_sales_alert(lead: dict, scores: dict, analysis: dict, assessment_id: st
     phone   = lead.get("phone", "-")
     final   = int(scores.get("final", 0))
     color   = scores.get("color", "red")
-    ds      = scores.get("ds", {})
-    crits   = scores.get("crits", [])
     pkg     = analysis.get("pkg", "-")
     score_lbl = SCORE_LABELS.get(color, "")
     flag_col  = '#DC2626' if color == 'red' else '#D97706'
     exec_txt  = analysis.get('exec', '')
 
-    crit_html = "".join(
-        f"<li style='color:#DC2626'>{c.get('label', c.get('id', ''))}</li>"
-        for c in crits
-    ) or "<li>Keine</li>"
-
-    dim_html = "".join(
-        f"<tr><td style='padding:4px 8px;color:#64748B'>{k.title()}</td>"
-        f"<td style='padding:4px 8px;font-weight:700;color:{'#059669' if v>=80 else '#D97706' if v>=60 else '#DC2626'}'>{int(v)}%</td></tr>"
-        for k, v in ds.items()
-    )
-
     html = f"""
 <!DOCTYPE html>
-<html lang="de">
-<head><meta charset="UTF-8"><style>
-  body {{ font-family: -apple-system, system-ui, sans-serif; color: #0A1940; background: #f4f6fb; margin:0; }}
-  .wrap {{ max-width: 580px; margin: 0 auto; background: #fff; }}
-  .header {{ background: {flag_col}; padding: 20px 28px; }}
-  .header h1 {{ color: #fff; margin: 0; font-size: 18px; }}
-  .body {{ padding: 24px 28px; }}
-  table {{ border-collapse: collapse; width: 100%; }}
-  .meta td {{ padding: 6px 0; font-size: 13px; border-bottom: 1px solid #F1F5F9; }}
-  .meta td:first-child {{ color: #64748B; width: 130px; }}
-  .meta td:last-child {{ font-weight: 600; }}
-  .score-big {{ font-size: 48px; font-weight: 900; color: {flag_col}; }}
-</style></head>
-<body>
-<div class="wrap">
-  <div class="header">
-    <h1>Neuer Lead - {score_lbl}</h1>
-  </div>
-  <div class="body">
-    <div class="score-big">{final}<span style="font-size:16px;font-weight:400;color:#94A3B8">/100</span></div>
+<html lang="de"><head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,sans-serif;background:#f4f6fb;margin:0">
+<div style="max-width:580px;margin:0 auto;background:#fff">
+  <div style="background:{flag_col};padding:20px 28px"><h1 style="color:#fff;margin:0;font-size:18px">Neuer Lead - {score_lbl}</h1></div>
+  <div style="padding:24px 28px">
+    <div style="font-size:48px;font-weight:900;color:{flag_col}">{final}<span style="font-size:16px;font-weight:400;color:#94A3B8">/100</span></div>
     <p style="margin:4px 0 20px;color:#64748B;font-size:13px">Assessment-ID: {assessment_id}</p>
-    <table class="meta">
-      <tr><td>Name</td><td>{name}</td></tr>
-      <tr><td>Unternehmen</td><td>{company}</td></tr>
-      <tr><td>Lieferant</td><td>{supplier}</td></tr>
-      <tr><td>E-Mail</td><td><a href="mailto:{email}">{email}</a></td></tr>
-      <tr><td>Telefon</td><td>{phone}</td></tr>
-      <tr><td>Paket-Empfehlung</td><td><strong style="color:#E8960C">{pkg}</strong></td></tr>
+    <table style="border-collapse:collapse;width:100%;font-size:13px">
+      <tr><td style="padding:6px 0;color:#64748B;width:130px">Name</td><td style="padding:6px 0;font-weight:600">{name}</td></tr>
+      <tr><td style="padding:6px 0;color:#64748B">Unternehmen</td><td style="padding:6px 0;font-weight:600">{company}</td></tr>
+      <tr><td style="padding:6px 0;color:#64748B">Lieferant</td><td style="padding:6px 0;font-weight:600">{supplier}</td></tr>
+      <tr><td style="padding:6px 0;color:#64748B">E-Mail</td><td style="padding:6px 0;font-weight:600"><a href="mailto:{email}">{email}</a></td></tr>
+      <tr><td style="padding:6px 0;color:#64748B">Telefon</td><td style="padding:6px 0;font-weight:600">{phone}</td></tr>
+      <tr><td style="padding:6px 0;color:#64748B">Paket</td><td style="padding:6px 0;font-weight:600;color:#E8960C">{pkg}</td></tr>
     </table>
-    <h3 style="margin:20px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#64748B">Dimensionen</h3>
-    <table>{dim_html}</table>
-    <h3 style="margin:16px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#DC2626">Kritische Luecken</h3>
-    <ul style="margin:0;padding-left:20px;font-size:13px">{crit_html}</ul>
-    <h3 style="margin:16px 0 6px;font-size:13px;color:#64748B">KI-Einschaetzung</h3>
-    <p style="font-size:13px;color:#475569;line-height:1.5">{exec_txt}</p>
-    <div style="margin-top:24px;padding:16px;background:#FFF7ED;border-radius:8px;text-align:center">
-      <a href="mailto:{email}" style="background:#E8960C;color:#fff;padding:10px 24px;border-radius:6px;font-weight:700;text-decoration:none;font-size:14px">
-        Jetzt {name} kontaktieren
-      </a>
-    </div>
+    <p style="font-size:13px;color:#475569;line-height:1.5;margin-top:14px">{exec_txt}</p>
   </div>
 </div>
 </body></html>
 """
-    return _send(
-        to=ALERT_EMAIL,
-        subject=f"[YNHALD Lead] {company} - Score {final}/100 - {score_lbl}",
-        html=html,
-    )
+    return _send(ALERT_EMAIL, f"[YNHALD Lead] {company} - Score {final}/100 - {score_lbl}", html)
 
 
 # ==============================================================
-#  KRITIKALITAETS-EINSTUFUNG  (Software Technologies)
-#  Multi-Lieferanten: ein Report ueber mehrere Lieferanten
+#  KRITIKALITAET (Software Technologies Design)
 # ==============================================================
 
-GRADE_COLORS = {"A": "#DC2626", "B": "#D97706", "C": "#2563EB", "D": "#059669"}
+ST_BG    = "#0a0e14"
+ST_PANEL = "#121a26"
+ST_LINE  = "#27384d"
+ST_INK   = "#e7eef7"
+ST_SOFT  = "#8da2bb"
+ST_DIM   = "#5d748f"
+ST_CYAN  = "#28d3c4"
+GRADE_COLORS = {"A": "#ef5c57", "B": "#f5b942", "C": "#3b9df5", "D": "#27c08a"}
 
 
-def _supplier_block(s: dict) -> str:
-    """HTML-Block fuer einen einzelnen Lieferanten im Report."""
+def _btn(href, label, bg=ST_CYAN, color="#04201d"):
+    return (f'<a href="{href}" target="_blank" '
+            f'style="display:inline-block;background:{bg};color:{color};'
+            f'padding:12px 22px;border-radius:8px;font-weight:700;text-decoration:none;'
+            f'font-size:14px;margin:4px 6px">{label}</a>')
+
+
+def _supplier_block_email(s: dict) -> str:
     grade = s.get("grade", "-")
-    gcol  = GRADE_COLORS.get(grade, "#0A1940")
+    gcol  = GRADE_COLORS.get(grade, ST_CYAN)
     rec   = s.get("recommendation", {})
     name  = s.get("name", "-")
     url   = s.get("url", "")
     plz   = s.get("plz", "")
-    grade_name = s.get('gradeName', '')
+    gname = s.get("gradeName", "")
     meta  = " &middot; ".join([x for x in [url, plz] if x])
     meta_html = (" &middot; " + meta) if meta else ""
-    tiefe = rec.get('tiefe', '')
-    reass = rec.get('reass', '')
-    monitoring = rec.get('monitoring', '')
-    freigabe = rec.get('freigabe', '')
+    tiefe = rec.get("tiefe", "")
+    reass = rec.get("reass", "")
+    mon   = rec.get("monitoring", "")
+    frei  = rec.get("freigabe", "")
 
     return f"""
-    <div style="border:1px solid #E9EDF2;border-radius:10px;margin-bottom:16px;overflow:hidden">
-      <div style="display:flex;align-items:center;gap:12px;padding:14px 16px;background:#F8FAFC;border-bottom:1px solid #E9EDF2">
-        <div style="width:38px;height:38px;border-radius:8px;background:{gcol};color:#fff;font-weight:900;font-size:18px;text-align:center;line-height:38px">{grade}</div>
-        <div>
-          <div style="font-weight:700;font-size:15px;color:#0A1940">{name}</div>
-          <div style="font-size:12px;color:#94A3B8">Stufe {grade} &middot; {grade_name}{meta_html}</div>
-        </div>
+    <div style="border:1px solid {ST_LINE};border-radius:12px;margin-bottom:16px;overflow:hidden;background:{ST_PANEL}">
+      <div style="padding:16px 18px;border-bottom:1px solid {ST_LINE}">
+        <table style="border-collapse:collapse"><tr>
+          <td style="width:40px;vertical-align:middle"><div style="width:40px;height:40px;border-radius:8px;background:{gcol};color:#fff;font-weight:900;font-size:19px;text-align:center;line-height:40px">{grade}</div></td>
+          <td style="padding-left:12px;vertical-align:middle">
+            <div style="font-weight:700;font-size:15px;color:{ST_INK}">{name}</div>
+            <div style="font-size:12px;color:{ST_DIM};font-family:'Courier New',monospace">Stufe {grade} &middot; {gname}{meta_html}</div>
+          </td>
+        </tr></table>
       </div>
       <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <tr><td style="padding:8px 16px;color:#64748B;width:150px;border-bottom:1px solid #F1F5F9">Prueftiefe</td><td style="padding:8px 16px;border-bottom:1px solid #F1F5F9">{tiefe}</td></tr>
-        <tr><td style="padding:8px 16px;color:#64748B;border-bottom:1px solid #F1F5F9">Re-Assessment</td><td style="padding:8px 16px;border-bottom:1px solid #F1F5F9">{reass}</td></tr>
-        <tr><td style="padding:8px 16px;color:#64748B;border-bottom:1px solid #F1F5F9">Monitoring</td><td style="padding:8px 16px;border-bottom:1px solid #F1F5F9">{monitoring}</td></tr>
-        <tr><td style="padding:8px 16px;color:#64748B">Freigabe</td><td style="padding:8px 16px">{freigabe}</td></tr>
+        <tr><td style="padding:9px 18px;color:{ST_SOFT};width:150px;border-bottom:1px solid {ST_LINE}">Pr&uuml;ftiefe</td><td style="padding:9px 18px;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{tiefe}</td></tr>
+        <tr><td style="padding:9px 18px;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">Re-Assessment</td><td style="padding:9px 18px;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{reass}</td></tr>
+        <tr><td style="padding:9px 18px;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">Monitoring</td><td style="padding:9px 18px;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{mon}</td></tr>
+        <tr><td style="padding:9px 18px;color:{ST_SOFT}">Freigabe</td><td style="padding:9px 18px;color:{ST_INK}">{frei}</td></tr>
       </table>
     </div>"""
 
 
-def send_criticality_lead_email(lead: dict, suppliers: list, summary: str = "") -> bool:
-    """Kritikalitaets-Report (mehrere Lieferanten) an den Kunden."""
+def send_criticality_lead_email(lead: dict, suppliers: list, summary: str = "",
+                                pdf_bytes: Optional[bytes] = None) -> bool:
+    """Kritikalitaets-Report an den Kunden - SW-Tech-Design, mit Buttons + PDF."""
     name = lead.get("name", "")
+    first = name.split(" ")[0] if name else ""
     n    = len(suppliers)
     plural = "en" if n != 1 else ""
-    blocks = "".join(_supplier_block(s) for s in suppliers)
+    blocks = "".join(_supplier_block_email(s) for s in suppliers)
+
     summary_html = ""
     if summary:
         summary_html = f"""
-      <div style="background:#F1F6FE;border-radius:8px;padding:16px 18px;margin-bottom:22px">
-        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#1E3FA0;margin-bottom:6px">Gesamteinschaetzung</div>
-        <p style="font-size:14px;line-height:1.6;color:#334155;margin:0">{summary}</p>
+      <div style="background:rgba(40,211,196,0.08);border:1px solid {ST_LINE};border-radius:10px;padding:16px 18px;margin-bottom:22px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:{ST_CYAN};margin-bottom:6px;font-family:'Courier New',monospace">Gesamteinsch&auml;tzung</div>
+        <p style="font-size:14px;line-height:1.6;color:{ST_INK};margin:0">{summary}</p>
+      </div>"""
+
+    buttons = f"""
+      <div style="text-align:center;margin:8px 0 4px">
+        {_btn(CAL_URL, "Beratungsgespr&auml;ch buchen")}
+        {_btn(WHATSAPP_URL, "Per WhatsApp chatten", bg="#25D366", color="#04140f")}
       </div>"""
 
     html = f"""
 <!DOCTYPE html>
 <html lang="de">
-<head><meta charset="UTF-8"><style>
-  body {{ font-family: -apple-system, system-ui, sans-serif; color: #0A1940; background: #f4f6fb; margin: 0; padding: 0; }}
-  .wrap {{ max-width: 640px; margin: 0 auto; background: #fff; }}
-  .header {{ background: #0A1940; padding: 28px 32px; }}
-  .header h1 {{ color: #fff; margin: 0; font-size: 22px; }}
-  .header p {{ color: #93C5FD; margin: 4px 0 0; font-size: 13px; }}
-  .body {{ padding: 28px 32px; }}
-  .text {{ font-size: 14px; line-height: 1.6; color: #475569; }}
-  .footer {{ background: #F8FAFC; padding: 20px 32px; text-align: center; font-size: 12px; color: #94A3B8; }}
-</style></head>
-<body>
-<div class="wrap">
-  <div class="header">
-    <h1>Software Technologies</h1>
-    <p>Ihr Kritikalitaets-Report ist bereit</p>
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
+<div style="max-width:640px;margin:0 auto;background:{ST_BG}">
+
+  <div style="padding:30px 32px 22px 32px;border-bottom:1px solid {ST_LINE}">
+    <div style="font-size:19px;font-weight:700;color:{ST_INK};letter-spacing:-.01em">Software<span style="color:{ST_CYAN}">&middot;</span>Technologies</div>
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-top:2px">SSOT &middot; Lieferanten-Kritikalit&auml;t</div>
   </div>
-  <div class="body">
-    <p>Guten Tag {name},</p>
-    <p class="text">vielen Dank fuer Ihre Einstufung. Nachfolgend finden Sie den Kritikalitaets-Report ueber <strong>{n} Lieferant{plural}</strong> - jeweils mit Stufe A-D und Empfehlung fuer Ihr Risikomanagement.</p>
+
+  <div style="padding:28px 32px">
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.14em;color:{ST_CYAN};font-family:'Courier New',monospace;margin-bottom:10px">Kritikalit&auml;ts-Report</div>
+    <h1 style="font-size:23px;color:{ST_INK};margin:0 0 14px 0;font-weight:700">Ihre Einstufung &uuml;ber {n} Lieferant{plural}</h1>
+    <p style="font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 22px 0">
+      Guten Tag {first}, vielen Dank f&uuml;r Ihre Einstufung. Nachfolgend finden Sie f&uuml;r jeden Lieferanten die Kritikalit&auml;tsstufe A&ndash;D und die daraus abgeleitete Empfehlung f&uuml;r Ihr Risikomanagement. Den vollst&auml;ndigen Report finden Sie zus&auml;tzlich im PDF-Anhang.
+    </p>
+
     {summary_html}
     {blocks}
-    <p class="text" style="margin-top:20px">Diese Einstufung priorisiert Ihr Risikomanagement. Fuer ein vollstaendiges, quellenbasiertes Assessment einzelner Lieferanten (OSINT, Fragenkatalog, Expertenbewertung) stehen wir gern bereit.</p>
-    <p class="text">Mit freundlichen Gruessen,<br><strong>Ihr Software-Technologies-Team</strong></p>
+
+    <div style="border:1px solid {ST_LINE};border-radius:12px;padding:22px;margin-top:24px;text-align:center;background:{ST_PANEL}">
+      <div style="font-size:15px;font-weight:700;color:{ST_INK};margin-bottom:4px">N&auml;chster Schritt: das vollst&auml;ndige Assessment</div>
+      <p style="font-size:13px;color:{ST_SOFT};margin:0 0 14px 0">Wir erstellen f&uuml;r Ihre kritischen Lieferanten das detaillierte, quellenbasierte Assessment (OSINT, Fragenkatalog, Expertenbewertung).</p>
+      {buttons}
+    </div>
+
+    <p style="font-size:13px;line-height:1.6;color:{ST_SOFT};margin-top:24px">Mit freundlichen Gr&uuml;&szlig;en,<br><strong style="color:{ST_INK}">Ihr Software-Technologies-Team</strong></p>
   </div>
-  <div class="footer">Software Technologies &middot; azajic@sw-tech.net &middot; Vertraulich</div>
+
+  <div style="padding:20px 32px;border-top:1px solid {ST_LINE};text-align:center">
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;line-height:1.7">
+      <a href="{WEBSITE_URL}" style="color:{ST_CYAN};text-decoration:none">sw-tech.net</a> &middot;
+      <a href="mailto:office@sw-tech.net" style="color:{ST_SOFT};text-decoration:none">office@sw-tech.net</a><br>
+      Software Technologies-Development-Service GesmbH &middot; Wien &middot; powered by Ynhald
+    </div>
+  </div>
+
 </div>
 </body></html>
 """
-    return _send(
-        to=lead["email"],
-        subject=f"Ihr Kritikalitaets-Report - {n} Lieferant{plural}",
-        html=html,
-    )
+    return _send(lead["email"], f"Ihr Kritikalit\u00e4ts-Report - {n} Lieferant{plural}",
+                 html, pdf_bytes=pdf_bytes, pdf_name="Kritikalitaets-Report.pdf")
 
 
 def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: str = "") -> bool:
-    """Alert an das Team: neuer Kritikalitaets-Lead (mehrere Lieferanten)."""
+    """Alert an das Team - SW-Tech-Design."""
     name    = lead.get("name", "")
     company = lead.get("company", "")
     email   = lead.get("email", "")
@@ -304,59 +290,49 @@ def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: s
 
     rows = ""
     for s in suppliers:
-        gcol = GRADE_COLORS.get(s.get('grade'), '#0A1940')
+        gcol = GRADE_COLORS.get(s.get("grade"), ST_CYAN)
         rows += (
-            f"<tr><td style='padding:7px 8px;border-bottom:1px solid #F1F5F9'>"
-            f"<span style='display:inline-block;width:22px;height:22px;border-radius:5px;background:{gcol};color:#fff;font-weight:700;font-size:12px;text-align:center;line-height:22px'>{s.get('grade','')}</span></td>"
-            f"<td style='padding:7px 8px;border-bottom:1px solid #F1F5F9;font-weight:600'>{s.get('name','')}</td>"
-            f"<td style='padding:7px 8px;border-bottom:1px solid #F1F5F9;color:#64748B'>{s.get('gradeName','')}</td></tr>"
+            f'<tr><td style="padding:8px 8px;border-bottom:1px solid {ST_LINE}">'
+            f'<span style="display:inline-block;width:24px;height:24px;border-radius:6px;background:{gcol};color:#fff;font-weight:700;font-size:12px;text-align:center;line-height:24px">{s.get("grade","")}</span></td>'
+            f'<td style="padding:8px 8px;border-bottom:1px solid {ST_LINE};font-weight:600;color:{ST_INK}">{s.get("name","")}</td>'
+            f'<td style="padding:8px 8px;border-bottom:1px solid {ST_LINE};color:{ST_SOFT}">{s.get("gradeName","")}</td></tr>'
         )
 
     summary_html = ""
     if summary:
-        summary_html = f"<p style='font-size:13px;color:#475569;line-height:1.5;margin-top:14px'>{summary}</p>"
+        summary_html = f'<p style="font-size:13px;color:{ST_SOFT};line-height:1.5;margin-top:14px">{summary}</p>'
 
     html = f"""
 <!DOCTYPE html>
 <html lang="de">
-<head><meta charset="UTF-8"><style>
-  body {{ font-family: -apple-system, system-ui, sans-serif; color: #0A1940; background: #f4f6fb; margin:0; }}
-  .wrap {{ max-width: 580px; margin: 0 auto; background: #fff; }}
-  .header {{ background: #0A1940; padding: 20px 28px; }}
-  .header h1 {{ color: #fff; margin: 0; font-size: 18px; }}
-  .body {{ padding: 24px 28px; }}
-  table {{ border-collapse: collapse; width: 100%; }}
-  .meta td {{ padding: 6px 0; font-size: 13px; border-bottom: 1px solid #F1F5F9; }}
-  .meta td:first-child {{ color: #64748B; width: 130px; }}
-  .meta td:last-child {{ font-weight: 600; }}
-</style></head>
-<body>
-<div class="wrap">
-  <div class="header">
-    <h1>Neuer Kritikalitaets-Lead - {n} Lieferant{plural}</h1>
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
+<div style="max-width:580px;margin:0 auto;background:{ST_BG}">
+  <div style="padding:22px 28px;border-bottom:1px solid {ST_LINE}">
+    <div style="font-size:11px;color:{ST_CYAN};font-family:'Courier New',monospace;letter-spacing:.1em;text-transform:uppercase">Neuer Kritikalit&auml;ts-Lead</div>
+    <h1 style="color:{ST_INK};margin:6px 0 0 0;font-size:18px">{n} Lieferant{plural} eingestuft</h1>
   </div>
-  <div class="body">
-    <p style="margin:0 0 16px;color:#64748B;font-size:13px">ID: {crit_id}</p>
-    <table class="meta">
-      <tr><td>Name</td><td>{name}</td></tr>
-      <tr><td>Unternehmen</td><td>{company}</td></tr>
-      <tr><td>E-Mail</td><td><a href="mailto:{email}">{email}</a></td></tr>
-      <tr><td>Telefon</td><td>{phone}</td></tr>
+  <div style="padding:24px 28px">
+    <p style="margin:0 0 16px;color:{ST_DIM};font-size:12px;font-family:'Courier New',monospace">ID: {crit_id}</p>
+    <table style="border-collapse:collapse;width:100%;font-size:13px">
+      <tr><td style="padding:7px 0;color:{ST_SOFT};width:130px;border-bottom:1px solid {ST_LINE}">Name</td><td style="padding:7px 0;font-weight:600;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{name}</td></tr>
+      <tr><td style="padding:7px 0;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">Unternehmen</td><td style="padding:7px 0;font-weight:600;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{company}</td></tr>
+      <tr><td style="padding:7px 0;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">E-Mail</td><td style="padding:7px 0;font-weight:600;border-bottom:1px solid {ST_LINE}"><a href="mailto:{email}" style="color:{ST_CYAN};text-decoration:none">{email}</a></td></tr>
+      <tr><td style="padding:7px 0;color:{ST_SOFT}">Telefon</td><td style="padding:7px 0;font-weight:600;color:{ST_INK}">{phone}</td></tr>
     </table>
-    <h3 style="margin:20px 0 8px;font-size:13px;text-transform:uppercase;letter-spacing:.06em;color:#64748B">Eingestufte Lieferanten</h3>
-    <table>{rows}</table>
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{ST_SOFT};font-family:'Courier New',monospace;margin:22px 0 8px">Eingestufte Lieferanten</div>
+    <table style="border-collapse:collapse;width:100%;font-size:13px">{rows}</table>
     {summary_html}
-    <div style="margin-top:24px;padding:16px;background:#FFF7ED;border-radius:8px;text-align:center">
-      <a href="mailto:{email}" style="background:#E8960C;color:#fff;padding:10px 24px;border-radius:6px;font-weight:700;text-decoration:none;font-size:14px">
-        Jetzt {name} kontaktieren
-      </a>
+
+    <div style="margin-top:22px;text-align:center">
+      <a href="mailto:{email}" style="display:inline-block;background:{ST_CYAN};color:#04201d;padding:11px 24px;border-radius:8px;font-weight:700;text-decoration:none;font-size:14px">{name} kontaktieren</a>
     </div>
+  </div>
+  <div style="padding:16px 28px;border-top:1px solid {ST_LINE};text-align:center;font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace">
+    Software Technologies &middot; Interner Lead-Alert
   </div>
 </div>
 </body></html>
 """
-    return _send(
-        to=ALERT_EMAIL,
-        subject=f"[Kritikalitaet] {company or name} - {n} Lieferant{plural}",
-        html=html,
-    )
+    return _send(ALERT_EMAIL, f"[Kritikalit\u00e4t] {company or name} - {n} Lieferant{plural}", html)

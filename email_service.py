@@ -336,3 +336,164 @@ def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: s
 </body></html>
 """
     return _send(ALERT_EMAIL, f"[Kritikalit\u00e4t] {company or name} - {n} Lieferant{plural}", html)
+
+
+# ==============================================================
+#  KRITIKALITAET REPORT DOUBLE-OPT-IN
+# ==============================================================
+
+def send_criticality_confirm_email(email: str, name: str, n_suppliers: int, confirm_url: str) -> bool:
+    """Bestaetigungsmail (Double-Opt-in) fuer den Kritikalitaets-Report."""
+    first = name.split(" ")[0] if name else ""
+    plural = "en" if n_suppliers != 1 else ""
+    html = f"""
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
+<div style="max-width:560px;margin:0 auto;background:{ST_BG}">
+  <div style="padding:30px 32px 22px 32px;border-bottom:1px solid {ST_LINE}">
+    <div style="font-size:19px;font-weight:700;color:{ST_INK};letter-spacing:-.01em">Software<span style="color:{ST_CYAN}">&middot;</span>Technologies</div>
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-top:2px">SSOT &middot; Lieferanten-Kritikalit&auml;t</div>
+  </div>
+  <div style="padding:28px 32px">
+    <h1 style="font-size:21px;color:{ST_INK};margin:0 0 14px 0;font-weight:700">Nur noch ein Klick zu Ihrem Report</h1>
+    <p style="font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 22px 0">
+      Guten Tag {first}, Sie haben einen Kritikalit&auml;ts-Report &uuml;ber {n_suppliers} Lieferant{plural} angefordert. Bitte best&auml;tigen Sie kurz, dass diese Anfrage von Ihnen stammt &ndash; danach senden wir Ihnen den vollst&auml;ndigen Report inklusive PDF sofort zu.
+    </p>
+    <div style="text-align:center;margin:26px 0">
+      <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#04201d;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Report jetzt anfordern</a>
+    </div>
+    <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:22px 0 0 0">
+      Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br>
+      <a href="{confirm_url}" style="color:{ST_CYAN};text-decoration:none;word-break:break-all">{confirm_url}</a>
+    </p>
+    <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:18px 0 0 0">
+      Wenn Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail einfach &ndash; es wird dann kein Report versendet.
+    </p>
+  </div>
+  <div style="padding:20px 32px;border-top:1px solid {ST_LINE};text-align:center">
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;line-height:1.7">
+      <a href="{WEBSITE_URL}" style="color:{ST_CYAN};text-decoration:none">sw-tech.net</a> &middot;
+      <a href="mailto:office@sw-tech.net" style="color:{ST_SOFT};text-decoration:none">office@sw-tech.net</a><br>
+      Software Technologies-Development-Service GesmbH &middot; Wien
+    </div>
+  </div>
+</div>
+</body></html>
+"""
+    return _send(email, "Bitte best\u00e4tigen Sie Ihre Report-Anfrage", html)
+
+
+def criticality_confirmed_page(email: str = "", n_suppliers: int = 0, already: bool = False) -> str:
+    """Seite nach Bestaetigung des Kritikalitaets-Reports."""
+    plural = "en" if n_suppliers != 1 else ""
+    if already or not email:
+        headline = "Link ung&uuml;ltig oder bereits best&auml;tigt"
+        text = "Dieser Best&auml;tigungslink ist nicht mehr g&uuml;ltig. M&ouml;glicherweise wurde Ihr Report bereits versendet."
+    else:
+        headline = "Report ist unterwegs"
+        text = f'Vielen Dank! Ihre Anfrage ist best&auml;tigt. Ihr Kritikalit&auml;ts-Report &uuml;ber {n_suppliers} Lieferant{plural} wird jetzt an <strong style="color:{ST_INK}">{email}</strong> gesendet.'
+    return f"""<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Report best\u00e4tigt \u2013 Software Technologies</title>
+<style>
+  body{{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};color:{ST_INK};margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
+  .card{{max-width:460px;text-align:center;background:{ST_PANEL};border:1px solid {ST_LINE};border-radius:18px;padding:44px 36px}}
+  .brand{{font-size:17px;font-weight:700;margin-bottom:4px}}
+  .brand .ac{{color:{ST_CYAN}}}
+  .sub{{font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-bottom:28px}}
+  .check{{width:76px;height:76px;border-radius:50%;background:rgba(40,211,196,.14);display:flex;align-items:center;justify-content:center;margin:0 auto 22px}}
+  .check svg{{width:36px;height:36px;stroke:{ST_CYAN};fill:none;stroke-width:2.5}}
+  h1{{font-size:22px;margin:0 0 12px 0}}
+  p{{font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 8px 0}}
+  .btn{{display:inline-block;margin-top:22px;background:{ST_CYAN};color:#04201d;padding:12px 26px;border-radius:9px;font-weight:700;text-decoration:none;font-size:14px}}
+</style></head>
+<body>
+  <div class="card">
+    <div class="brand">Software<span class="ac">&middot;</span>Technologies</div>
+    <div class="sub">SSOT Supplier Risk Management</div>
+    <div class="check"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
+    <h1>{headline}</h1>
+    <p>{text}</p>
+    <p>Pr&uuml;fen Sie ggf. Ihren Spam-Ordner.</p>
+    <a class="btn" href="{WEBSITE_URL}">Zur Website</a>
+  </div>
+</body></html>"""
+
+
+# ==============================================================
+#  NEWSLETTER DOUBLE-OPT-IN (Software Technologies Design)
+# ==============================================================
+
+def send_newsletter_confirm_email(email: str, confirm_url: str) -> bool:
+    """Bestaetigungsmail (Double-Opt-in) an einen neuen Newsletter-Abonnenten."""
+    html = f"""
+<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
+<div style="max-width:560px;margin:0 auto;background:{ST_BG}">
+  <div style="padding:30px 32px 22px 32px;border-bottom:1px solid {ST_LINE}">
+    <div style="font-size:19px;font-weight:700;color:{ST_INK};letter-spacing:-.01em">Software<span style="color:{ST_CYAN}">&middot;</span>Technologies</div>
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-top:2px">Newsletter-Anmeldung best&auml;tigen</div>
+  </div>
+  <div style="padding:28px 32px">
+    <h1 style="font-size:21px;color:{ST_INK};margin:0 0 14px 0;font-weight:700">Nur noch ein Klick</h1>
+    <p style="font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 22px 0">
+      Bitte best&auml;tigen Sie Ihre Anmeldung zu unseren Updates rund um Supplier Risk Management und regulatorische Neuerungen (NIS2, LkSG, MoCRA). Erst nach Ihrer Best&auml;tigung nehmen wir Sie in den Verteiler auf.
+    </p>
+    <div style="text-align:center;margin:26px 0">
+      <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#04201d;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Anmeldung best&auml;tigen</a>
+    </div>
+    <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:22px 0 0 0">
+      Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br>
+      <a href="{confirm_url}" style="color:{ST_CYAN};text-decoration:none;word-break:break-all">{confirm_url}</a>
+    </p>
+    <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:18px 0 0 0">
+      Wenn Sie sich nicht angemeldet haben, ignorieren Sie diese E-Mail einfach &ndash; ohne Best&auml;tigung erfolgt keine Aufnahme in den Verteiler.
+    </p>
+  </div>
+  <div style="padding:20px 32px;border-top:1px solid {ST_LINE};text-align:center">
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;line-height:1.7">
+      <a href="{WEBSITE_URL}" style="color:{ST_CYAN};text-decoration:none">sw-tech.net</a> &middot;
+      <a href="mailto:office@sw-tech.net" style="color:{ST_SOFT};text-decoration:none">office@sw-tech.net</a><br>
+      Software Technologies-Development-Service GesmbH &middot; Wien
+    </div>
+  </div>
+</div>
+</body></html>
+"""
+    return _send(email, "Bitte best\u00e4tigen Sie Ihre Newsletter-Anmeldung", html)
+
+
+def newsletter_confirmed_page(email: str = "") -> str:
+    """HTML-Seite, die nach erfolgreicher Bestaetigung angezeigt wird."""
+    return f"""<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Anmeldung best\u00e4tigt \u2013 Software Technologies</title>
+<style>
+  body{{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};color:{ST_INK};margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
+  .card{{max-width:460px;text-align:center;background:{ST_PANEL};border:1px solid {ST_LINE};border-radius:18px;padding:44px 36px}}
+  .brand{{font-size:17px;font-weight:700;margin-bottom:4px}}
+  .brand .ac{{color:{ST_CYAN}}}
+  .sub{{font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-bottom:28px}}
+  .check{{width:76px;height:76px;border-radius:50%;background:rgba(40,211,196,.14);display:flex;align-items:center;justify-content:center;margin:0 auto 22px}}
+  .check svg{{width:36px;height:36px;stroke:{ST_CYAN};fill:none;stroke-width:2.5}}
+  h1{{font-size:22px;margin:0 0 12px 0}}
+  p{{font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 8px 0}}
+  .btn{{display:inline-block;margin-top:22px;background:{ST_CYAN};color:#04201d;padding:12px 26px;border-radius:9px;font-weight:700;text-decoration:none;font-size:14px}}
+</style></head>
+<body>
+  <div class="card">
+    <div class="brand">Software<span class="ac">&middot;</span>Technologies</div>
+    <div class="sub">SSOT Supplier Risk Management</div>
+    <div class="check"><svg viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5"/></svg></div>
+    <h1>Anmeldung best\u00e4tigt</h1>
+    <p>Vielen Dank! Ihre Anmeldung f\u00fcr <strong style="color:{ST_INK}">{email}</strong> ist best\u00e4tigt.</p>
+    <p>Sie erhalten k\u00fcnftig unsere Updates zu Supplier Risk Management und regulatorischen Neuerungen.</p>
+    <a class="btn" href="{WEBSITE_URL}">Zur Website</a>
+  </div>
+</body></html>"""

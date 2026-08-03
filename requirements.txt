@@ -9,3 +9,4 @@ resend==2.4.0
 python-multipart==0.0.20
 alembic==1.14.0
 httpx==0.28.1
+dnspython

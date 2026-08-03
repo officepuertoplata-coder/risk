@@ -14,16 +14,16 @@ from reportlab.platypus import (
     SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 )
 
-# --- Farben (Software Technologies) ---
-BG      = HexColor("#0a0e14")
-PANEL   = HexColor("#121a26")
-LINE    = HexColor("#27384d")
-INK     = HexColor("#e7eef7")
-INK_SOFT= HexColor("#8da2bb")
-INK_DIM = HexColor("#5d748f")
-CYAN    = HexColor("#28d3c4")
-GRADE_COLORS = {"A": HexColor("#ef5c57"), "B": HexColor("#f5b942"),
-                "C": HexColor("#3b9df5"), "D": HexColor("#27c08a")}
+# --- Farben (Software Technologies, helles Layout) ---
+BG      = HexColor("#ffffff")
+PANEL   = HexColor("#f5f8fc")
+LINE    = HexColor("#e2e8f0")
+INK     = HexColor("#0f1e33")
+INK_SOFT= HexColor("#475569")
+INK_DIM = HexColor("#94a3b8")
+CYAN    = HexColor("#0fb5a6")
+GRADE_COLORS = {"A": HexColor("#e0483f"), "B": HexColor("#d9931a"),
+                "C": HexColor("#2f7fd6"), "D": HexColor("#1f9e6e")}
 WHITE   = HexColor("#ffffff")
 
 

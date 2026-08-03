@@ -158,17 +158,17 @@ def send_sales_alert(lead: dict, scores: dict, analysis: dict, assessment_id: st
 #  KRITIKALITAET (Software Technologies Design)
 # ==============================================================
 
-ST_BG    = "#0a0e14"
-ST_PANEL = "#121a26"
-ST_LINE  = "#27384d"
-ST_INK   = "#e7eef7"
-ST_SOFT  = "#8da2bb"
-ST_DIM   = "#5d748f"
-ST_CYAN  = "#28d3c4"
-GRADE_COLORS = {"A": "#ef5c57", "B": "#f5b942", "C": "#3b9df5", "D": "#27c08a"}
+ST_BG    = "#ffffff"   # heller Hintergrund
+ST_PANEL = "#f5f8fc"   # sehr helles Panel
+ST_LINE  = "#e2e8f0"   # helle Trennlinien
+ST_INK   = "#0f1e33"   # dunkler Text (Haupttext)
+ST_SOFT  = "#475569"   # gedaempfter Text
+ST_DIM   = "#94a3b8"   # sehr heller Text (Fusszeilen)
+ST_CYAN  = "#0fb5a6"   # kraeftigeres Cyan (auf Weiss besser lesbar)
+GRADE_COLORS = {"A": "#e0483f", "B": "#d9931a", "C": "#2f7fd6", "D": "#1f9e6e"}
 
 
-def _btn(href, label, bg=ST_CYAN, color="#04201d"):
+def _btn(href, label, bg=ST_CYAN, color="#ffffff"):
     return (f'<a href="{href}" target="_blank" '
             f'style="display:inline-block;background:{bg};color:{color};'
             f'padding:12px 22px;border-radius:8px;font-weight:700;text-decoration:none;'
@@ -222,7 +222,7 @@ def send_criticality_lead_email(lead: dict, suppliers: list, summary: str = "",
     summary_html = ""
     if summary:
         summary_html = f"""
-      <div style="background:rgba(40,211,196,0.08);border:1px solid {ST_LINE};border-radius:10px;padding:16px 18px;margin-bottom:22px">
+      <div style="background:rgba(15,181,166,0.08);border:1px solid {ST_LINE};border-radius:10px;padding:16px 18px;margin-bottom:22px">
         <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.1em;color:{ST_CYAN};margin-bottom:6px;font-family:'Courier New',monospace">Gesamteinsch&auml;tzung</div>
         <p style="font-size:14px;line-height:1.6;color:{ST_INK};margin:0">{summary}</p>
       </div>"""
@@ -326,7 +326,7 @@ def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: s
     {summary_html}
 
     <div style="margin-top:22px;text-align:center">
-      <a href="mailto:{email}" style="display:inline-block;background:{ST_CYAN};color:#04201d;padding:11px 24px;border-radius:8px;font-weight:700;text-decoration:none;font-size:14px">{name} kontaktieren</a>
+      <a href="mailto:{email}" style="display:inline-block;background:{ST_CYAN};color:#ffffff;padding:11px 24px;border-radius:8px;font-weight:700;text-decoration:none;font-size:14px">{name} kontaktieren</a>
     </div>
   </div>
   <div style="padding:16px 28px;border-top:1px solid {ST_LINE};text-align:center;font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace">
@@ -362,7 +362,7 @@ def send_criticality_confirm_email(email: str, name: str, n_suppliers: int, conf
       Guten Tag {first}, Sie haben einen Kritikalit&auml;ts-Report &uuml;ber {n_suppliers} Lieferant{plural} angefordert. Bitte best&auml;tigen Sie kurz, dass diese Anfrage von Ihnen stammt &ndash; danach senden wir Ihnen den vollst&auml;ndigen Report inklusive PDF sofort zu.
     </p>
     <div style="text-align:center;margin:26px 0">
-      <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#04201d;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Report jetzt anfordern</a>
+      <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#ffffff;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Report jetzt anfordern</a>
     </div>
     <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:22px 0 0 0">
       Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br>
@@ -404,11 +404,11 @@ def criticality_confirmed_page(email: str = "", n_suppliers: int = 0, already: b
   .brand{{font-size:17px;font-weight:700;margin-bottom:4px}}
   .brand .ac{{color:{ST_CYAN}}}
   .sub{{font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-bottom:28px}}
-  .check{{width:76px;height:76px;border-radius:50%;background:rgba(40,211,196,.14);display:flex;align-items:center;justify-content:center;margin:0 auto 22px}}
+  .check{{width:76px;height:76px;border-radius:50%;background:rgba(15,181,166,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 22px}}
   .check svg{{width:36px;height:36px;stroke:{ST_CYAN};fill:none;stroke-width:2.5}}
   h1{{font-size:22px;margin:0 0 12px 0}}
   p{{font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 8px 0}}
-  .btn{{display:inline-block;margin-top:22px;background:{ST_CYAN};color:#04201d;padding:12px 26px;border-radius:9px;font-weight:700;text-decoration:none;font-size:14px}}
+  .btn{{display:inline-block;margin-top:22px;background:{ST_CYAN};color:#ffffff;padding:12px 26px;border-radius:9px;font-weight:700;text-decoration:none;font-size:14px}}
 </style></head>
 <body>
   <div class="card">
@@ -445,7 +445,7 @@ def send_newsletter_confirm_email(email: str, confirm_url: str) -> bool:
       Bitte best&auml;tigen Sie Ihre Anmeldung zu unseren Updates rund um Supplier Risk Management und regulatorische Neuerungen (NIS2, LkSG, MoCRA). Erst nach Ihrer Best&auml;tigung nehmen wir Sie in den Verteiler auf.
     </p>
     <div style="text-align:center;margin:26px 0">
-      <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#04201d;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Anmeldung best&auml;tigen</a>
+      <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#ffffff;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Anmeldung best&auml;tigen</a>
     </div>
     <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:22px 0 0 0">
       Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br>
@@ -480,11 +480,11 @@ def newsletter_confirmed_page(email: str = "") -> str:
   .brand{{font-size:17px;font-weight:700;margin-bottom:4px}}
   .brand .ac{{color:{ST_CYAN}}}
   .sub{{font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-bottom:28px}}
-  .check{{width:76px;height:76px;border-radius:50%;background:rgba(40,211,196,.14);display:flex;align-items:center;justify-content:center;margin:0 auto 22px}}
+  .check{{width:76px;height:76px;border-radius:50%;background:rgba(15,181,166,.12);display:flex;align-items:center;justify-content:center;margin:0 auto 22px}}
   .check svg{{width:36px;height:36px;stroke:{ST_CYAN};fill:none;stroke-width:2.5}}
   h1{{font-size:22px;margin:0 0 12px 0}}
   p{{font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 8px 0}}
-  .btn{{display:inline-block;margin-top:22px;background:{ST_CYAN};color:#04201d;padding:12px 26px;border-radius:9px;font-weight:700;text-decoration:none;font-size:14px}}
+  .btn{{display:inline-block;margin-top:22px;background:{ST_CYAN};color:#ffffff;padding:12px 26px;border-radius:9px;font-weight:700;text-decoration:none;font-size:14px}}
 </style></head>
 <body>
   <div class="card">

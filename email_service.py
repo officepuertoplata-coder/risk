@@ -279,8 +279,58 @@ def send_criticality_lead_email(lead: dict, suppliers: list, summary: str = "",
                  html, pdf_bytes=pdf_bytes, pdf_name="Kritikalitaets-Report.pdf")
 
 
+def _value_color(v):
+    """Farbe je nach Antwort-Wert 1-4 (4 = hohes Risiko = rot)."""
+    return {4: "#e0483f", 3: "#d9931a", 2: "#2f7fd6", 1: "#1f9e6e"}.get(v, ST_SOFT)
+
+
+def _alert_supplier_detail(s: dict) -> str:
+    """Detailblock pro Lieferant: Stufe, Impact/Wahrscheinlichkeit, alle Antworten."""
+    grade = s.get("grade", "-")
+    gcol  = GRADE_COLORS.get(grade, ST_CYAN)
+    name  = s.get("name", "-")
+    gname = s.get("gradeName", "")
+    url   = s.get("url", "")
+    plz   = s.get("plz", "")
+    impact = s.get("impact", "")
+    likelihood = s.get("likelihood", "")
+    meta = " &middot; ".join([x for x in [url, plz] if x])
+    meta_html = (" &middot; " + meta) if meta else ""
+
+    ans_rows = ""
+    for a in s.get("answers", []):
+        v = a.get("value", 0)
+        vcol = _value_color(v)
+        ans_rows += (
+            f'<tr>'
+            f'<td style="padding:6px 8px;border-bottom:1px solid {ST_LINE};color:{ST_DIM};font-size:11px;width:150px;vertical-align:top">{a.get("cat","")}</td>'
+            f'<td style="padding:6px 8px;border-bottom:1px solid {ST_LINE};color:{ST_INK};font-size:12px">{a.get("answer","")}</td>'
+            f'<td style="padding:6px 8px;border-bottom:1px solid {ST_LINE};text-align:center;width:34px">'
+            f'<span style="display:inline-block;min-width:20px;padding:1px 6px;border-radius:5px;background:{vcol};color:#fff;font-weight:700;font-size:11px">{v}</span></td>'
+            f'</tr>'
+        )
+
+    return f"""
+    <div style="border:1px solid {ST_LINE};border-radius:10px;margin-bottom:14px;overflow:hidden">
+      <div style="padding:12px 14px;background:{ST_PANEL};border-bottom:1px solid {ST_LINE}">
+        <table style="border-collapse:collapse;width:100%"><tr>
+          <td style="width:34px;vertical-align:middle"><div style="width:34px;height:34px;border-radius:7px;background:{gcol};color:#fff;font-weight:900;font-size:16px;text-align:center;line-height:34px">{grade}</div></td>
+          <td style="padding-left:10px;vertical-align:middle">
+            <div style="font-weight:700;font-size:14px;color:{ST_INK}">{name}</div>
+            <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace">Stufe {grade} &middot; {gname}{meta_html}</div>
+          </td>
+          <td style="text-align:right;vertical-align:middle;white-space:nowrap">
+            <div style="font-size:10px;color:{ST_DIM};font-family:'Courier New',monospace;text-transform:uppercase">Schaden / Wahrsch.</div>
+            <div style="font-size:13px;font-weight:700;color:{ST_INK}">{impact} / {likelihood}</div>
+          </td>
+        </tr></table>
+      </div>
+      <table style="border-collapse:collapse;width:100%">{ans_rows}</table>
+    </div>"""
+
+
 def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: str = "") -> bool:
-    """Alert an das Team - SW-Tech-Design."""
+    """Alert an das Team - SW-Tech-Design, mit allen Antworten je Lieferant."""
     name    = lead.get("name", "")
     company = lead.get("company", "")
     email   = lead.get("email", "")
@@ -288,26 +338,18 @@ def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: s
     n       = len(suppliers)
     plural  = "en" if n != 1 else ""
 
-    rows = ""
-    for s in suppliers:
-        gcol = GRADE_COLORS.get(s.get("grade"), ST_CYAN)
-        rows += (
-            f'<tr><td style="padding:8px 8px;border-bottom:1px solid {ST_LINE}">'
-            f'<span style="display:inline-block;width:24px;height:24px;border-radius:6px;background:{gcol};color:#fff;font-weight:700;font-size:12px;text-align:center;line-height:24px">{s.get("grade","")}</span></td>'
-            f'<td style="padding:8px 8px;border-bottom:1px solid {ST_LINE};font-weight:600;color:{ST_INK}">{s.get("name","")}</td>'
-            f'<td style="padding:8px 8px;border-bottom:1px solid {ST_LINE};color:{ST_SOFT}">{s.get("gradeName","")}</td></tr>'
-        )
+    details = "".join(_alert_supplier_detail(s) for s in suppliers)
 
     summary_html = ""
     if summary:
-        summary_html = f'<p style="font-size:13px;color:{ST_SOFT};line-height:1.5;margin-top:14px">{summary}</p>'
+        summary_html = f'<p style="font-size:13px;color:{ST_SOFT};line-height:1.5;margin-top:6px;margin-bottom:18px">{summary}</p>'
 
     html = f"""
 <!DOCTYPE html>
 <html lang="de">
 <head><meta charset="UTF-8"></head>
 <body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
-<div style="max-width:580px;margin:0 auto;background:{ST_BG}">
+<div style="max-width:600px;margin:0 auto;background:{ST_BG}">
   <div style="padding:22px 28px;border-bottom:1px solid {ST_LINE}">
     <div style="font-size:11px;color:{ST_CYAN};font-family:'Courier New',monospace;letter-spacing:.1em;text-transform:uppercase">Neuer Kritikalit&auml;ts-Lead</div>
     <h1 style="color:{ST_INK};margin:6px 0 0 0;font-size:18px">{n} Lieferant{plural} eingestuft</h1>
@@ -320,10 +362,10 @@ def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: s
       <tr><td style="padding:7px 0;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">E-Mail</td><td style="padding:7px 0;font-weight:600;border-bottom:1px solid {ST_LINE}"><a href="mailto:{email}" style="color:{ST_CYAN};text-decoration:none">{email}</a></td></tr>
       <tr><td style="padding:7px 0;color:{ST_SOFT}">Telefon</td><td style="padding:7px 0;font-weight:600;color:{ST_INK}">{phone}</td></tr>
     </table>
-
-    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{ST_SOFT};font-family:'Courier New',monospace;margin:22px 0 8px">Eingestufte Lieferanten</div>
-    <table style="border-collapse:collapse;width:100%;font-size:13px">{rows}</table>
     {summary_html}
+
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{ST_SOFT};font-family:'Courier New',monospace;margin:22px 0 10px">Antworten je Lieferant &middot; Wert 4 = h&ouml;chstes Risiko</div>
+    {details}
 
     <div style="margin-top:22px;text-align:center">
       <a href="mailto:{email}" style="display:inline-block;background:{ST_CYAN};color:#ffffff;padding:11px 24px;border-radius:8px;font-weight:700;text-decoration:none;font-size:14px">{name} kontaktieren</a>
@@ -342,10 +384,20 @@ def send_criticality_alert(lead: dict, suppliers: list, crit_id: str, summary: s
 #  KRITIKALITAET REPORT DOUBLE-OPT-IN
 # ==============================================================
 
-def send_criticality_confirm_email(email: str, name: str, n_suppliers: int, confirm_url: str) -> bool:
-    """Bestaetigungsmail (Double-Opt-in) fuer den Kritikalitaets-Report."""
+def send_criticality_confirm_email(email: str, name: str, n_suppliers: int, confirm_url: str,
+                                   with_newsletter: bool = False) -> bool:
+    """Bestaetigungsmail (Double-Opt-in) fuer den Kritikalitaets-Report.
+    Wenn with_newsletter=True, wird der Newsletter beim selben Klick mitbestaetigt."""
     first = name.split(" ")[0] if name else ""
     plural = "en" if n_suppliers != 1 else ""
+    nl_note = ""
+    if with_newsletter:
+        nl_note = f"""
+    <div style="background:rgba(15,181,166,0.08);border:1px solid {ST_LINE};border-radius:10px;padding:14px 16px;margin:0 0 22px 0">
+      <p style="font-size:13px;line-height:1.6;color:{ST_SOFT};margin:0">
+        Mit diesem Klick best&auml;tigen Sie zugleich Ihre Anmeldung zu unseren Updates rund um Supplier Risk Management (NIS2, LkSG, MoCRA). Jederzeit abbestellbar.
+      </p>
+    </div>"""
     html = f"""
 <!DOCTYPE html>
 <html lang="de">
@@ -361,6 +413,7 @@ def send_criticality_confirm_email(email: str, name: str, n_suppliers: int, conf
     <p style="font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 22px 0">
       Guten Tag {first}, Sie haben einen Kritikalit&auml;ts-Report &uuml;ber {n_suppliers} Lieferant{plural} angefordert. Bitte best&auml;tigen Sie kurz, dass diese Anfrage von Ihnen stammt &ndash; danach senden wir Ihnen den vollst&auml;ndigen Report inklusive PDF sofort zu.
     </p>
+    {nl_note}
     <div style="text-align:center;margin:26px 0">
       <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#ffffff;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Report jetzt anfordern</a>
     </div>

@@ -25,6 +25,10 @@ from email_service import (
     criticality_confirmed_page,
     send_newsletter_confirm_email,
     newsletter_confirmed_page,
+    send_assessment_confirm_email,
+    send_assessment_report_email,
+    send_assessment_alert,
+    assessment_result_page,
 )
 
 load_dotenv()
@@ -284,7 +288,21 @@ def create_assessment(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
+    # E-Mail-Vorfilter (Syntax + MX-Domain + keine Wegwerf-Adresse)
+    ok, reason = validate_email_address(payload.lead.email)
+    if not ok:
+        msg = {
+            "syntax": "Bitte eine gueltige E-Mail-Adresse eingeben.",
+            "no_mx": "Diese E-Mail-Domain existiert nicht oder kann keine E-Mails empfangen.",
+            "disposable": "Bitte eine dauerhafte E-Mail-Adresse verwenden (keine Wegwerf-Adresse).",
+        }.get(reason, "Bitte eine gueltige E-Mail-Adresse eingeben.")
+        raise HTTPException(status_code=400, detail=msg)
+
     assessment_id = str(uuid.uuid4())
+    token = uuid.uuid4().hex
+
+    scores_dump   = payload.scores.model_dump()
+    analysis_dump = payload.analysis.model_dump()
 
     rec = Assessment(
         id             = uuid.UUID(assessment_id),
@@ -299,44 +317,79 @@ def create_assessment(
         dimension_scores = payload.scores.ds,
         final_score    = payload.scores.final,
         color          = payload.scores.color,
-        top_issues     = [t.model_dump() if hasattr(t,"model_dump") else t for t in payload.scores.top],
-        critical_issues= [c.model_dump() if hasattr(c,"model_dump") else c for c in payload.scores.crits],
+        top_issues     = [t.model_dump() if hasattr(t, "model_dump") else t for t in payload.scores.top],
+        critical_issues= [c.model_dump() if hasattr(c, "model_dump") else c for c in payload.scores.crits],
         sales_flag     = payload.scores.salesFlag,
-        analysis       = payload.analysis.model_dump(),
+        analysis       = analysis_dump,
+        confirmed      = 0,      # Report/Ergebnis erst nach Bestaetigung
+        token          = token,
     )
     db.add(rec)
     db.commit()
-    db.refresh(rec)
-    print(f"[DB] Assessment gespeichert: {assessment_id} | {payload.lead.company} | {int(payload.scores.final)}/100")
+    print(f"[DB] Assessment gespeichert (pending): {assessment_id} | {payload.lead.company} | {int(payload.scores.final)}/100")
 
-    from database import SessionLocal
-    bg_db = SessionLocal()
+    lead_dump = payload.lead.model_dump()
 
-    data_for_pdf = {
-        "lead":          payload.lead.model_dump(),
-        "industry":      payload.industry,
-        "industryLabel": payload.industryLabel,
-        "answers":       payload.answers,
-        "scores":        payload.scores.model_dump(),
-        "analysis":      payload.analysis.model_dump(),
-    }
+    # Interner Alert SOFORT (auch vor Bestaetigung)
+    background_tasks.add_task(send_assessment_alert, lead_dump, scores_dump, analysis_dump, assessment_id)
 
-    background_tasks.add_task(
-        process_assessment_async,
-        assessment_id=assessment_id,
-        data=data_for_pdf,
-        lead=payload.lead.model_dump(),
-        scores=payload.scores.model_dump(),
-        analysis=payload.analysis.model_dump(),
-        db=bg_db,
-    )
+    # Kunde bekommt zunaechst nur die Bestaetigungsmail (Double-Opt-in)
+    confirm_url = f"{_public_base_url()}/api/assessment/confirm?token={token}"
+    background_tasks.add_task(send_assessment_confirm_email,
+                             payload.lead.email, payload.lead.name, confirm_url)
 
     return AssessmentResponse(
         id=assessment_id,
-        status="saved",
-        email_sent=True,
-        message=f"Assessment gespeichert. Report wird an {payload.lead.email} gesendet.",
+        status="pending_confirmation",
+        email_sent=False,
+        message=f"Bestaetigungsmail an {payload.lead.email} gesendet.",
     )
+
+
+@app.get("/api/assessment/confirm", response_class=HTMLResponse)
+def assessment_confirm(token: str, background_tasks: BackgroundTasks, db: Session = Depends(get_db)):
+    """Bestaetigt das Assessment (Double-Opt-in): zeigt das Ergebnis + sendet den Report."""
+    rec = db.query(Assessment).filter(Assessment.token == token).first()
+
+    if not rec:
+        return HTMLResponse(assessment_result_page(None, None, {}, already=True), status_code=200)
+
+    lead = {
+        "name": rec.submitted_by, "company": rec.company_name,
+        "email": rec.email, "phone": rec.phone,
+    }
+    scores = {
+        "ds":    rec.dimension_scores or {},
+        "final": rec.final_score or 0,
+        "color": rec.color or "red",
+        "top":   rec.top_issues or [],
+        "crits": rec.critical_issues or [],
+    }
+    analysis = rec.analysis or {}
+
+    if not rec.confirmed:
+        rec.confirmed = 1
+        rec.confirmed_at = datetime.utcnow()
+        rec.token = None
+        db.commit()
+        print(f"[ASSESSMENT] Bestaetigt, Report wird versendet: {rec.id} -> {rec.email}")
+
+        # PDF erzeugen und Report senden
+        pdf_bytes = None
+        try:
+            data_for_pdf = {
+                "lead": lead, "industry": rec.industry,
+                "industryLabel": rec.industry_label,
+                "answers": rec.answers or {},
+                "scores": scores, "analysis": analysis,
+            }
+            pdf_bytes = generate_pdf(data_for_pdf)
+            print(f"[PDF] Assessment-Report erzeugt ({len(pdf_bytes)} Bytes)")
+        except Exception as e:
+            print(f"[PDF ERROR] {e}")
+        background_tasks.add_task(send_assessment_report_email, lead, scores, analysis, pdf_bytes)
+
+    return HTMLResponse(assessment_result_page(scores, analysis, lead), status_code=200)
 
 
 # --- Criticality Route (Multi-Lieferant) ---

@@ -515,3 +515,293 @@ def newsletter_confirmed_page(email: str = "") -> str:
     <a class="btn" href="{WEBSITE_URL}">Zur Website</a>
   </div>
 </body></html>"""
+
+
+# ==============================================================
+#  RISIKOANALYSE / ASSESSMENT (Software Technologies Design, hell)
+# ==============================================================
+
+DIM_LABELS = {
+    "legal":       "Rechtliche Absicherung",
+    "cyber":       "IT-Sicherheit & Datenschutz",
+    "operational": "Operative Risiken",
+    "financial":   "Finanzielle Stabilität",
+}
+DIM_EMOJI = {"legal": "&#9878;", "cyber": "&#128272;", "operational": "&#9881;", "financial": "&#128202;"}
+
+SCORE_COLOR = {"green": "#1f9e6e", "yellow": "#d9931a", "red": "#e0483f"}
+SCORE_TEXT  = {"green": "Gut gesichert", "yellow": "Handlungsbedarf", "red": "Kritisches Risiko"}
+SCORE_ICON  = {"green": "&#9989;", "yellow": "&#9888;&#65039;", "red": "&#128680;"}
+
+
+def _dim_bar(dim, val):
+    try:
+        v = int(round(float(val)))
+    except Exception:
+        v = 0
+    col = "#1f9e6e" if v >= 80 else "#d9931a" if v >= 60 else "#e0483f"
+    label = DIM_LABELS.get(dim, dim)
+    emoji = DIM_EMOJI.get(dim, "")
+    return f"""
+      <div style="margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;margin-bottom:7px">
+          <span style="font-size:14px;color:{ST_INK};font-weight:500">{emoji} {label}</span>
+          <span style="font-size:14px;font-weight:800;color:{col}">{v}%</span>
+        </div>
+        <div style="background:#eef2f7;border-radius:99px;height:9px">
+          <div style="background:{col};border-radius:99px;height:9px;width:{v}%"></div>
+        </div>
+      </div>"""
+
+
+def _assessment_result_html(scores: dict, analysis: dict, company: str = "") -> str:
+    """Der innere Ergebnis-Block (wird in Seite UND Report-Mail genutzt)."""
+    final = int(round(float(scores.get("final", 0))))
+    color = scores.get("color", "red")
+    scol  = SCORE_COLOR.get(color, "#e0483f")
+    stext = SCORE_TEXT.get(color, "")
+    sicon = SCORE_ICON.get(color, "")
+    ds    = scores.get("ds", {}) or {}
+    top   = scores.get("top", []) or []
+
+    exec_txt = analysis.get("exec", "")
+    impact   = analysis.get("impact", "")
+    pkg      = analysis.get("pkg", "")
+    pkg_why  = analysis.get("pkgWhy", "")
+
+    dims_html = "".join(_dim_bar(d, v) for d, v in ds.items())
+
+    top_html = ""
+    if top:
+        items = ""
+        for i, q in enumerate(top):
+            label = q.get("label", "") if isinstance(q, dict) else str(q)
+            fix   = q.get("fix", "") if isinstance(q, dict) else ""
+            border = "border-bottom:1px solid #eef2f7;" if i < len(top) - 1 else ""
+            items += f"""
+            <div style="display:flex;gap:12px;padding:12px 0;{border}">
+              <div style="width:28px;height:28px;border-radius:50%;background:#e0483f;color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:none">{i+1}</div>
+              <div><div style="font-weight:700;color:{ST_INK};font-size:14px;margin-bottom:2px">{label}</div><div style="font-size:13px;color:{ST_SOFT}">{fix}</div></div>
+            </div>"""
+        top_html = f"""
+        <div style="background:{ST_PANEL};border:1px solid {ST_LINE};border-radius:14px;padding:20px 22px;margin-bottom:16px">
+          <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:{ST_SOFT};font-weight:700;margin-bottom:8px;font-family:'Courier New',monospace">Wichtigste Risiken</div>
+          {items}
+        </div>"""
+
+    prios = [analysis.get("p1"), analysis.get("p2"), analysis.get("p3")]
+    prio_colors = ["#0fb5a6", "#2f7fd6", "#7C3AED"]
+    prio_items = ""
+    real = [p for p in prios if p]
+    for i, p in enumerate(real):
+        title = p.get("title", "") if isinstance(p, dict) else ""
+        text  = p.get("text", "") if isinstance(p, dict) else ""
+        border = "border-bottom:1px solid #eef2f7;" if i < len(real) - 1 else ""
+        prio_items += f"""
+        <div style="display:flex;gap:12px;padding:12px 0;{border}">
+          <div style="width:28px;height:28px;border-radius:50%;background:{prio_colors[i%3]};color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:none">{i+1}</div>
+          <div><div style="font-weight:700;color:{ST_INK};font-size:14px;margin-bottom:2px">Priorit&auml;t {i+1}: {title}</div><div style="font-size:13px;color:{ST_SOFT};line-height:1.5">{text}</div></div>
+        </div>"""
+
+    return f"""
+    <div style="border:1px solid {ST_LINE};border-radius:16px;text-align:center;padding:30px 24px;margin-bottom:16px;background:{ST_PANEL}">
+      <div style="font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:{ST_CYAN};margin-bottom:8px;font-family:'Courier New',monospace">Ihr Supplier-Risk-Score</div>
+      <div style="font-size:70px;font-weight:900;color:{scol};line-height:1">{final}</div>
+      <div style="font-size:15px;color:{ST_SOFT};margin-bottom:16px">von 100 Punkten</div>
+      <div style="display:inline-block;padding:9px 22px;border-radius:99px;background:{scol}1a;color:{scol};font-weight:700;font-size:15px">{sicon} {stext}</div>
+    </div>
+
+    <div style="border:1px solid {ST_LINE};border-left:4px solid {ST_CYAN};border-radius:12px;padding:20px 22px;margin-bottom:16px">
+      <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:{ST_CYAN};font-weight:700;margin-bottom:8px;font-family:'Courier New',monospace">Zusammenfassung</div>
+      <p style="font-size:14px;line-height:1.6;color:{ST_INK};margin:0">{exec_txt}</p>
+    </div>
+
+    <div style="border:1px solid {ST_LINE};border-radius:14px;padding:20px 22px;margin-bottom:16px">
+      <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:{ST_SOFT};font-weight:700;margin-bottom:16px;font-family:'Courier New',monospace">Dimensionen</div>
+      {dims_html}
+    </div>
+
+    <div style="border:1px solid {ST_LINE};border-left:4px solid #e0483f;border-radius:12px;padding:20px 22px;margin-bottom:16px">
+      <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:#e0483f;font-weight:700;margin-bottom:8px;font-family:'Courier New',monospace">Auswirkung</div>
+      <p style="font-size:14px;line-height:1.6;color:{ST_INK};margin:0">{impact}</p>
+    </div>
+
+    {top_html}
+
+    <div style="border:1px solid {ST_LINE};border-radius:14px;padding:20px 22px;margin-bottom:16px">
+      <div style="font-size:11px;letter-spacing:.1em;text-transform:uppercase;color:{ST_SOFT};font-weight:700;margin-bottom:8px;font-family:'Courier New',monospace">Empfohlene Ma&szlig;nahmen</div>
+      {prio_items}
+    </div>
+
+    <div style="border:1px solid {ST_CYAN};border-radius:16px;text-align:center;padding:28px 24px;background:rgba(15,181,166,0.06)">
+      <div style="font-size:15px;font-weight:700;color:{ST_INK};margin-bottom:6px">Empfohlenes Paket: {pkg}</div>
+      <p style="font-size:13px;color:{ST_SOFT};margin:0 0 16px 0">{pkg_why}</p>
+      <a href="{CAL_URL}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#fff;padding:13px 30px;border-radius:10px;font-weight:700;text-decoration:none;font-size:15px;margin:0 5px 8px">Beratungsgespr&auml;ch buchen</a>
+      <a href="{WHATSAPP_URL}" target="_blank" style="display:inline-block;background:#25D366;color:#04140f;padding:13px 26px;border-radius:10px;font-weight:700;text-decoration:none;font-size:15px;margin:0 5px 8px">Per WhatsApp chatten</a>
+    </div>"""
+
+
+def assessment_result_page(scores: dict, analysis: dict, lead: dict, already: bool = False) -> str:
+    """Vollstaendige Ergebnisseite nach Bestaetigung (Double-Opt-in)."""
+    if already or not scores:
+        return f"""<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Link ung&uuml;ltig</title>
+<style>body{{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};color:{ST_INK};margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}}
+.card{{max-width:440px;text-align:center;background:{ST_PANEL};border:1px solid {ST_LINE};border-radius:18px;padding:44px 36px}}</style></head>
+<body><div class="card"><h1 style="font-size:20px;color:{ST_INK}">Link ung&uuml;ltig oder bereits verwendet</h1>
+<p style="color:{ST_SOFT};font-size:14px">Dieser Best&auml;tigungslink ist nicht mehr g&uuml;ltig. M&ouml;glicherweise wurde Ihr Report bereits freigeschaltet.</p>
+<a href="{WEBSITE_URL}" style="display:inline-block;margin-top:18px;background:{ST_CYAN};color:#fff;padding:11px 24px;border-radius:9px;font-weight:700;text-decoration:none">Zur Website</a></div></body></html>"""
+
+    company = lead.get("company", "")
+    name = lead.get("name", "")
+    inner = _assessment_result_html(scores, analysis, company)
+    return f"""<!DOCTYPE html>
+<html lang="de">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ihr Supplier-Risk-Report &ndash; Software Technologies</title>
+<style>body{{font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};color:{ST_INK};margin:0;padding:0}}</style>
+</head>
+<body>
+  <div style="max-width:640px;margin:0 auto;padding:0 16px 60px">
+    <div style="padding:26px 4px 22px;border-bottom:1px solid {ST_LINE};margin-bottom:24px">
+      <div style="font-size:19px;font-weight:700;color:{ST_INK}">Software<span style="color:{ST_CYAN}">&middot;</span>Technologies</div>
+      <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-top:2px">SSOT &middot; Supplier Risk Assessment</div>
+    </div>
+    <div style="margin-bottom:20px">
+      <div style="display:inline-block;background:rgba(31,158,110,.12);color:#1f9e6e;font-size:12px;font-weight:700;padding:6px 14px;border-radius:99px">&#10003; E-Mail best&auml;tigt</div>
+      <p style="font-size:14px;color:{ST_SOFT};margin:12px 0 0">Guten Tag {name.split(' ')[0] if name else ''}, hier ist Ihr vollst&auml;ndiges Ergebnis f&uuml;r <strong style="color:{ST_INK}">{company}</strong>. Der PDF-Report ist zus&auml;tzlich in Ihrem Postfach.</p>
+    </div>
+    {inner}
+  </div>
+</body></html>"""
+
+
+def send_assessment_confirm_email(email: str, name: str, confirm_url: str) -> bool:
+    """Bestaetigungsmail (Double-Opt-in) fuer das Risiko-Assessment."""
+    first = name.split(" ")[0] if name else ""
+    html = f"""
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
+<div style="max-width:560px;margin:0 auto;background:{ST_BG}">
+  <div style="padding:30px 32px 22px 32px;border-bottom:1px solid {ST_LINE}">
+    <div style="font-size:19px;font-weight:700;color:{ST_INK}">Software<span style="color:{ST_CYAN}">&middot;</span>Technologies</div>
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-top:2px">SSOT &middot; Supplier Risk Assessment</div>
+  </div>
+  <div style="padding:28px 32px">
+    <h1 style="font-size:21px;color:{ST_INK};margin:0 0 14px 0;font-weight:700">Nur noch ein Klick zu Ihrem Ergebnis</h1>
+    <p style="font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 22px 0">
+      Guten Tag {first}, Sie haben ein Supplier-Risk-Assessment durchgef&uuml;hrt. Bitte best&auml;tigen Sie kurz, dass diese Anfrage von Ihnen stammt &ndash; danach sehen Sie Ihren vollst&auml;ndigen Score mit Analyse und erhalten den PDF-Report per E-Mail.
+    </p>
+    <div style="text-align:center;margin:26px 0">
+      <a href="{confirm_url}" target="_blank" style="display:inline-block;background:{ST_CYAN};color:#fff;padding:14px 30px;border-radius:8px;font-weight:700;text-decoration:none;font-size:15px">Ergebnis freischalten</a>
+    </div>
+    <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:22px 0 0 0">
+      Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:<br>
+      <a href="{confirm_url}" style="color:{ST_CYAN};text-decoration:none;word-break:break-all">{confirm_url}</a>
+    </p>
+    <p style="font-size:12px;line-height:1.6;color:{ST_DIM};margin:18px 0 0 0">
+      Wenn Sie diese Anfrage nicht gestellt haben, ignorieren Sie diese E-Mail einfach.
+    </p>
+  </div>
+  <div style="padding:20px 32px;border-top:1px solid {ST_LINE};text-align:center">
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;line-height:1.7">
+      <a href="{WEBSITE_URL}" style="color:{ST_CYAN};text-decoration:none">sw-tech.net</a> &middot;
+      <a href="mailto:office@sw-tech.net" style="color:{ST_SOFT};text-decoration:none">office@sw-tech.net</a><br>
+      Software Technologies-Development-Service GesmbH &middot; Wien
+    </div>
+  </div>
+</div>
+</body></html>
+"""
+    return _send(email, "Bitte best\u00e4tigen Sie Ihr Assessment", html)
+
+
+def send_assessment_report_email(lead: dict, scores: dict, analysis: dict, pdf_bytes=None) -> bool:
+    """Report-Mail (nach Bestaetigung) im hellen SW-Tech-Design, mit PDF."""
+    name = lead.get("name", "")
+    first = name.split(" ")[0] if name else ""
+    company = lead.get("company", "")
+    final = int(round(float(scores.get("final", 0))))
+    inner = _assessment_result_html(scores, analysis, company)
+    html = f"""
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
+<div style="max-width:640px;margin:0 auto;background:{ST_BG}">
+  <div style="padding:30px 32px 22px 32px;border-bottom:1px solid {ST_LINE}">
+    <div style="font-size:19px;font-weight:700;color:{ST_INK}">Software<span style="color:{ST_CYAN}">&middot;</span>Technologies</div>
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;letter-spacing:.05em;margin-top:2px">SSOT &middot; Supplier Risk Assessment</div>
+  </div>
+  <div style="padding:28px 32px">
+    <p style="font-size:14px;line-height:1.6;color:{ST_SOFT};margin:0 0 22px 0">Guten Tag {first}, hier ist Ihr vollst&auml;ndiger Supplier-Risk-Report f&uuml;r <strong style="color:{ST_INK}">{company}</strong>. Den Report finden Sie zus&auml;tzlich als PDF im Anhang.</p>
+    {inner}
+    <p style="font-size:13px;line-height:1.6;color:{ST_SOFT};margin-top:24px">Mit freundlichen Gr&uuml;&szlig;en,<br><strong style="color:{ST_INK}">Ihr Software-Technologies-Team</strong></p>
+  </div>
+  <div style="padding:20px 32px;border-top:1px solid {ST_LINE};text-align:center">
+    <div style="font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace;line-height:1.7">
+      <a href="{WEBSITE_URL}" style="color:{ST_CYAN};text-decoration:none">sw-tech.net</a> &middot; office@sw-tech.net<br>
+      Software Technologies-Development-Service GesmbH &middot; Wien &middot; powered by Ynhald
+    </div>
+  </div>
+</div>
+</body></html>
+"""
+    return _send(lead["email"], f"Ihr Supplier-Risk-Report - Score {final}/100",
+                 html, pdf_bytes=pdf_bytes, pdf_name="Supplier-Risk-Report.pdf")
+
+
+def send_assessment_alert(lead: dict, scores: dict, analysis: dict, assessment_id: str) -> bool:
+    """Kompakter interner Alert fuer ein Assessment (SW-Tech, hell)."""
+    name    = lead.get("name", "")
+    company = lead.get("company", "")
+    email   = lead.get("email", "")
+    phone   = lead.get("phone", "-")
+    final   = int(round(float(scores.get("final", 0))))
+    color   = scores.get("color", "red")
+    scol    = SCORE_COLOR.get(color, "#e0483f")
+    stext   = SCORE_TEXT.get(color, "")
+    pkg     = analysis.get("pkg", "-")
+    ds      = scores.get("ds", {}) or {}
+    exec_txt = analysis.get("exec", "")
+
+    dim_rows = ""
+    for d, v in ds.items():
+        try:
+            vi = int(round(float(v)))
+        except Exception:
+            vi = 0
+        c = "#1f9e6e" if vi >= 80 else "#d9931a" if vi >= 60 else "#e0483f"
+        dim_rows += f'<tr><td style="padding:5px 8px;color:{ST_SOFT};font-size:13px">{DIM_LABELS.get(d, d)}</td><td style="padding:5px 8px;text-align:right;font-weight:700;color:{c};font-size:13px">{vi}%</td></tr>'
+
+    html = f"""
+<!DOCTYPE html>
+<html lang="de"><head><meta charset="UTF-8"></head>
+<body style="font-family:-apple-system,system-ui,'Segoe UI',sans-serif;background:{ST_BG};margin:0;padding:0">
+<div style="max-width:560px;margin:0 auto;background:{ST_BG}">
+  <div style="padding:22px 28px;border-bottom:1px solid {ST_LINE}">
+    <div style="font-size:11px;color:{ST_CYAN};font-family:'Courier New',monospace;letter-spacing:.1em;text-transform:uppercase">Neuer Assessment-Lead</div>
+    <h1 style="color:{ST_INK};margin:6px 0 0 0;font-size:18px">Score {final}/100 &middot; {stext}</h1>
+  </div>
+  <div style="padding:24px 28px">
+    <div style="font-size:44px;font-weight:900;color:{scol};line-height:1;margin-bottom:6px">{final}<span style="font-size:15px;color:{ST_DIM};font-weight:400">/100</span></div>
+    <p style="margin:0 0 16px;color:{ST_DIM};font-size:12px;font-family:'Courier New',monospace">ID: {assessment_id}</p>
+    <table style="border-collapse:collapse;width:100%;font-size:13px">
+      <tr><td style="padding:7px 0;color:{ST_SOFT};width:130px;border-bottom:1px solid {ST_LINE}">Name</td><td style="padding:7px 0;font-weight:600;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{name}</td></tr>
+      <tr><td style="padding:7px 0;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">Unternehmen</td><td style="padding:7px 0;font-weight:600;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{company}</td></tr>
+      <tr><td style="padding:7px 0;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">E-Mail</td><td style="padding:7px 0;font-weight:600;border-bottom:1px solid {ST_LINE}"><a href="mailto:{email}" style="color:{ST_CYAN};text-decoration:none">{email}</a></td></tr>
+      <tr><td style="padding:7px 0;color:{ST_SOFT};border-bottom:1px solid {ST_LINE}">Telefon</td><td style="padding:7px 0;font-weight:600;color:{ST_INK};border-bottom:1px solid {ST_LINE}">{phone}</td></tr>
+      <tr><td style="padding:7px 0;color:{ST_SOFT}">Paket</td><td style="padding:7px 0;font-weight:600;color:#0fb5a6">{pkg}</td></tr>
+    </table>
+    <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:{ST_SOFT};font-family:'Courier New',monospace;margin:20px 0 6px">Dimensionen</div>
+    <table style="border-collapse:collapse;width:100%">{dim_rows}</table>
+    <p style="font-size:13px;color:{ST_SOFT};line-height:1.5;margin-top:16px">{exec_txt}</p>
+  </div>
+  <div style="padding:16px 28px;border-top:1px solid {ST_LINE};text-align:center;font-size:11px;color:{ST_DIM};font-family:'Courier New',monospace">
+    Software Technologies &middot; Interner Lead-Alert &middot; Vertraulich
+  </div>
+</div>
+</body></html>
+"""
+    return _send(ALERT_EMAIL, f"[Assessment] {company or name} - Score {final}/100 - {stext}", html)

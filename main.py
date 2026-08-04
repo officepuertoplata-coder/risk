@@ -15,6 +15,7 @@ from models import Assessment
 from schemas import AssessmentRequest, AssessmentResponse
 from pdf_generator import generate_pdf
 from criticality_pdf import generate_criticality_pdf
+from internal_pdf import generate_internal_pdf
 from email_service import (
     send_lead_email,
     send_sales_alert,
@@ -56,6 +57,7 @@ class CriticalityLead(Base):
     confirmed     = Column(Integer, default=0) # 0 = pending (Report noch nicht versendet), 1 = bestaetigt
     token         = Column(String(64))         # Bestaetigungs-Token fuer Report-DOI
     confirmed_at  = Column(DateTime)           # Zeitpunkt der Bestaetigung
+    wants_newsletter = Column(Integer, default=0)  # 1 = Newsletter-Anmeldung mit-bestaetigen
     created_at    = Column(DateTime, default=datetime.utcnow)
 
 
@@ -219,6 +221,56 @@ def start_newsletter_doi(db: Session, email: str, company: str = "", source: str
     return status
 
 
+def _confirm_newsletter_directly(db: Session, email: str, company: str = "", source: str = "web") -> None:
+    """
+    Traegt eine bereits verifizierte E-Mail direkt als bestaetigten Newsletter-Abonnenten ein.
+    Wird genutzt, wenn die E-Mail durch einen anderen Bestaetigungsklick (z. B. Report-DOI)
+    schon verifiziert wurde - dann braucht es keine zweite Bestaetigungsmail.
+    """
+    email = (email or "").strip().lower()
+    if not email or "@" not in email:
+        return
+
+    existing = db.query(NewsletterSubscriber).filter(
+        NewsletterSubscriber.email == email
+    ).first()
+
+    if existing:
+        if not existing.confirmed:
+            existing.confirmed = 1
+            existing.confirmed_at = datetime.utcnow()
+            existing.token = None
+            db.commit()
+    else:
+        db.add(NewsletterSubscriber(
+            id=str(uuid.uuid4()),
+            email=email,
+            company=company,
+            source=source,
+            confirmed=1,
+            confirmed_at=datetime.utcnow(),
+            created_at=datetime.utcnow(),
+        ))
+        db.commit()
+
+    print(f"[NEWSLETTER] Direkt bestaetigt (via Report-Klick): {email}")
+
+    # in Resend-Audience eintragen (falls konfiguriert)
+    RESEND_KEY = os.getenv("RESEND_API_KEY", "")
+    AUDIENCE_ID = os.getenv("RESEND_AUDIENCE_ID", "")
+    if RESEND_KEY and AUDIENCE_ID:
+        try:
+            import httpx
+            httpx.post(
+                f"https://api.resend.com/audiences/{AUDIENCE_ID}/contacts",
+                json={"email": email, "unsubscribed": False},
+                headers={"Authorization": f"Bearer {RESEND_KEY}"},
+                timeout=10,
+            )
+        except Exception as e:
+            print(f"[RESEND AUDIENCE] {e}")
+
+
 # --- Routes ---
 
 @app.get("/health")
@@ -326,6 +378,8 @@ def create_criticality(
         key=lambda g: _GRADE_ORDER.get(g, 0),
     )
 
+    wants_nl = 1 if lead.get("newsletter") else 0
+
     rec = CriticalityLead(
         id             = crit_id,
         name           = lead.get("name", ""),
@@ -338,25 +392,25 @@ def create_criticality(
         summary        = summary[:2000],
         confirmed      = 0,        # Report wird erst nach Bestaetigung versendet
         token          = token,
+        wants_newsletter = wants_nl,
     )
     db.add(rec)
     db.commit()
-    print(f"[DB] Criticality gespeichert (pending): {crit_id} | {lead.get('company')} | {len(suppliers)} Lieferanten | Top {top_grade}")
+    print(f"[DB] Criticality gespeichert (pending): {crit_id} | {lead.get('company')} | {len(suppliers)} Lieferanten | Top {top_grade} | Newsletter: {bool(wants_nl)}")
 
-    # Newsletter-Opt-in (eigenes Double-Opt-in)
-    if lead.get("newsletter"):
-        try:
-            start_newsletter_doi(db, lead["email"], lead.get("company", ""), source="kritikalitaet")
-        except Exception as e:
-            print(f"[NEWSLETTER ERROR] {e}")
+    # Lead-Alert an das Team geht SOFORT raus (auch vor Bestaetigung) - mit Detail-PDF
+    internal_pdf = None
+    try:
+        internal_pdf = generate_internal_pdf(lead, suppliers, summary)
+        print(f"[PDF] Internes Detail-PDF erzeugt ({len(internal_pdf)} Bytes)")
+    except Exception as e:
+        print(f"[PDF ERROR intern] {e}")
+    background_tasks.add_task(send_criticality_alert, lead, suppliers, crit_id, summary, internal_pdf)
 
-    # Lead-Alert an das Team geht SOFORT raus (auch vor Bestaetigung)
-    background_tasks.add_task(send_criticality_alert, lead, suppliers, crit_id, summary)
-
-    # Kunde bekommt zunaechst nur die Bestaetigungsmail (Double-Opt-in fuer den Report)
+    # EINE Bestaetigungsmail (Double-Opt-in). Newsletter wird beim selben Klick mitbestaetigt.
     confirm_url = f"{_public_base_url()}/api/criticality/confirm?token={token}"
     background_tasks.add_task(send_criticality_confirm_email, lead["email"],
-                             lead.get("name", ""), len(suppliers), confirm_url)
+                             lead.get("name", ""), len(suppliers), confirm_url, bool(wants_nl))
 
     return {
         "id": crit_id,
@@ -395,6 +449,13 @@ def criticality_confirm(token: str, background_tasks: BackgroundTasks, db: Sessi
         except Exception as e:
             print(f"[PDF ERROR] {e}")
         background_tasks.add_task(send_criticality_lead_email, lead, suppliers, summary, pdf_bytes)
+
+        # Newsletter mit-bestaetigen (derselbe Klick verifiziert die E-Mail bereits)
+        if rec.wants_newsletter:
+            try:
+                _confirm_newsletter_directly(db, rec.email, rec.company, source="kritikalitaet")
+            except Exception as e:
+                print(f"[NEWSLETTER ERROR] {e}")
 
     return HTMLResponse(criticality_confirmed_page(rec.email, rec.supplier_count), status_code=200)
 

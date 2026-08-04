@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from sqlalchemy import Column, String, Float, Boolean, DateTime, JSON
+from sqlalchemy import Column, String, Float, Boolean, DateTime, JSON, Integer
 from sqlalchemy.dialects.postgresql import UUID
 from database import Base
 
@@ -29,6 +29,11 @@ class Assessment(Base):
 
     # KI-Analyse
     analysis       = Column(JSON)   # {exec, impact, p1, p2, p3, pkg, pkgWhy}
+
+    # Double-Opt-in (Report/Ergebnis erst nach Bestaetigung)
+    confirmed      = Column(Integer, default=0)  # 0 = pending, 1 = bestaetigt
+    token          = Column(String(64))          # Bestaetigungs-Token
+    confirmed_at   = Column(DateTime)             # Zeitpunkt der Bestaetigung
 
     # Status
     email_sent_lead  = Column(Boolean, default=False)
